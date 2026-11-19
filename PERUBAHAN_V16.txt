@@ -1,0 +1,10 @@
+File baru atau berubah dari ZIP lampiran:
+PANDUAN_V16.md
+README.md
+functions/api/public/dashboard.js
+functions/lib/google.js
+functions/lib/metrics.js
+package-lock.json
+package.json
+src/main.jsx
+src/styles.css
