@@ -7,7 +7,8 @@ const pk=Buffer.from(await webcrypto.subtle.exportKey('pkcs8',keys.privateKey)).
 const env={GOOGLE_SHEETS_SPREADSHEET_ID:'period-api-test',GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:'test@example.invalid',private_key:`-----BEGIN PRIVATE KEY-----\n${pk}\n-----END PRIVATE KEY-----`})};
 const hits=[];const cache=new Map();
 globalThis.caches={default:{match:async key=>cache.get(key.url)?.clone()||undefined,put:async(key,res)=>cache.set(key.url,res.clone())}};
-let titles=['2026__IKU','2026__Report'];
+const sourceSheets=['IKU','Rencana Aksi','Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)','Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama','Monev Subkegiatan Penunjang','Rekap realisasi PKPT','Realisasi Fisik & Keu'];
+let titles=sourceSheets.map(name=>`2026__${name}`);
 globalThis.fetch=async(url)=>{
  const text=String(url);hits.push(text);
  if(text.includes('oauth2'))return Response.json({access_token:'fake',expires_in:3600});
@@ -18,6 +19,9 @@ const url=(period)=>new Request(`https://test.invalid/api/public/dashboard?year=
 let result=await onRequestGet({request:url('month-13'),env});assert.equal(result.status,400);
 result=await onRequestGet({request:url('month-01'),env});assert.equal(result.status,404,'An uninitialized monthly period must not fall back to annual');
 titles.push('2026__M01__IKU');
+result=await onRequestGet({request:url('month-01'),env});assert.equal(result.status,409,'Partial period must not display misleading zeros');
+const incomplete=await result.json();assert.ok(incomplete.missingSheets.includes('Realisasi Fisik & Keu'));
+titles.push(...sourceSheets.filter(name=>name!=='IKU').map(name=>`2026__M01__${name}`));
 result=await onRequestGet({request:url('month-01'),env});assert.equal(result.status,200);
 const data=await result.json();assert.equal(data.period,'month-01');
 const ranges=hits.filter(x=>x.includes('values:batchGet'));assert.ok(ranges.some(x=>x.includes('2026__M01__IKU')));assert.ok(ranges.every(x=>!x.includes("'2026__IKU'")));
