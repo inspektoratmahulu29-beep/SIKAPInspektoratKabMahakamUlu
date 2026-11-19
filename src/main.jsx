@@ -3,13 +3,21 @@ import {createRoot} from 'react-dom/client';
 import './styles.css';
 
 const WORKSHEET_URL=import.meta.env.VITE_KERTAS_KERJA_URL||'https://kkkinerjainspektoaratmahakamulu.pages.dev';
+const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
+ ...Array.from({length:12},(_,i)=>({value:`month-${String(i+1).padStart(2,'0')}`,label:new Intl.DateTimeFormat('id-ID',{month:'long'}).format(new Date(2026,i,1))})),
+ ...Array.from({length:4},(_,i)=>({value:`quarter-${i+1}`,label:`Triwulan ${i+1}`})),
+ ...Array.from({length:2},(_,i)=>({value:`semester-${i+1}`,label:`Semester ${i+1}`}))];
+const initialQuery=new URLSearchParams(window.location.search);
+const initialPeriod=PERIOD_OPTIONS.some(x=>x.value===initialQuery.get('period'))?initialQuery.get('period'):'annual';
+const initialYear=/^20\d{2}$/.test(initialQuery.get('year')||'')?Number(initialQuery.get('year')):2026;
+
 const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0).replace(/\u00a0/g,' ');
 const num=n=>new Intl.NumberFormat('id-ID',{maximumFractionDigits:0}).format(Number(n)||0);
 const pct=n=>`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})}%`;
 const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
 
 function App(){
-  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8),[year,setYear]=useState(2026),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
+  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8),[year,setYear]=useState(initialYear),[period,setPeriod]=useState(initialPeriod),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
   const etagRef=React.useRef('');
   const requestRef=React.useRef(null);
 
@@ -23,7 +31,7 @@ function App(){
       setLoadProgress(v=>Math.max(v,32));
       const headers={};
       if(etagRef.current) headers['If-None-Match']=etagRef.current;
-      const r=await fetch(`/api/public/dashboard?year=${year}&v=16.0`,{headers,cache:'no-store',signal:controller.signal});
+      const r=await fetch(`/api/public/dashboard?year=${year}&period=${encodeURIComponent(period)}&v=17.0`,{headers,cache:'no-store',signal:controller.signal});
       if(r.status===304){setError('');setSyncState('live');return;}
       const j=await r.json();
       setLoadProgress(v=>Math.max(v,78));
@@ -34,9 +42,10 @@ function App(){
       // Keep the last good snapshot visible so public viewers do not see a blank
       // dashboard during a short Google/Internet outage.
       setSyncState('offline');
-      if(!data) setError(e.name==='AbortError'?'Koneksi sumber data terlalu lambat.':'Data belum dapat ditampilkan.');
+      if(!controller.signal.aborted) setError(e.name==='AbortError'?'Koneksi sumber data terlalu lambat.':e.message||'Data belum dapat ditampilkan.');
     }finally{
-      clearTimeout(timer);requestRef.current=null;setLoadProgress(100);setTimeout(()=>setLoading(false),260);
+      clearTimeout(timer);
+      if(requestRef.current===controller){requestRef.current=null;setLoadProgress(100);setLoading(false);}
     }
   };
 
@@ -49,14 +58,15 @@ function App(){
       }catch{}
     })();
     etagRef.current='';
+    setData(null);setError('');setLoading(true);setLoadProgress(12);
     load();
     const tick=()=>{ if(document.visibilityState==='visible') load(); };
     const onVisibility=()=>{ if(document.visibilityState==='visible') load(); };
     const t=setInterval(tick,5000);
     const p=setInterval(()=>setPulse(v=>v+1),1800);
     document.addEventListener('visibilitychange',onVisibility);
-    return()=>{cancelled=true;clearInterval(t);clearInterval(p);document.removeEventListener('visibilitychange',onVisibility)};
-  },[year]);
+    return()=>{cancelled=true;clearInterval(t);clearInterval(p);document.removeEventListener('visibilitychange',onVisibility);requestRef.current?.abort();requestRef.current=null};
+  },[year,period]);
 
   const k=data?.kpi||{};
   const cards=useMemo(()=>[
@@ -87,6 +97,7 @@ function App(){
       <div className="top-actions">
         <div className={`realtime status-${syncState}`}><span className="live-dot"/> {syncState==='live'?'REALTIME':syncState==='stale'?'DATA TERAKHIR':'MENUNGGU SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
         <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
+        <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>setPeriod(e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label>
       </div>
     </header>
 
@@ -105,11 +116,11 @@ function App(){
         <div className="side-foot">Pemantauan kinerja terintegrasi dalam satu tampilan publik.</div>
       </aside>
 
-      <a className="worksheet-link" href={WORKSHEET_URL} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja ↗</a><main className="main">
+      <a className="worksheet-link" href={`${WORKSHEET_URL}?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}`} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja ↗</a><main className="main">
         <div className="ambient a1"/><div className="ambient a2"/><div className="grid-glow"/>
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow">INSPEKTORAT DAERAH • TA {year}</span>
+            <span className="eyebrow">INSPEKTORAT DAERAH • TA {year} • {PERIOD_OPTIONS.find(p=>p.value===period)?.label}</span>
             <h1 className="hero-title-animated"><span>{sourceTitle.split(' ')[0]}</span> <em>{sourceTitle.split(' ').slice(1).join(' ')}</em></h1>
             <p>Pusat visualisasi capaian anggaran, realisasi fisik, penugasan PKPT, output, dan kelengkapan kertas kerja Inspektorat Kabupaten Mahakam Ulu.</p>
             <div className="hero-line"><span/><span/><span/><span/><span/></div>
@@ -124,7 +135,7 @@ function App(){
           </div>
         </section>
 
-        {loading&&!data?<LoadingScreen progress={loadProgress}/>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><button onClick={load}>Muat kembali</button></div>:<>
+        {loading&&!data?<LoadingScreen progress={loadProgress}/>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><a href={`${WORKSHEET_URL}?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}`} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja untuk menyiapkan data periode</a><button onClick={load}>Muat kembali</button></div>:<>
           {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={setActiveKpi}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={setActiveKpi}/>} 
           {tab==='kinerja'&&<Kinerja k={k}/>} 

@@ -92,3 +92,9 @@ html{scroll-behavior:smooth}body{overflow-x:hidden;-webkit-tap-highlight-color:t
 @media(prefers-reduced-motion:reduce){.brand-sikap-animated,.hero-title-animated,.loading-brand-animated,.loading-title-animated,.orb-label-sikap-animated,.hero-title-animated:after,.loading-title-animated:after{animation:none!important}}
 
 .worksheet-link{position:fixed;right:24px;bottom:20px;z-index:40;background:#d7e9dc;color:#163d35;padding:12px 18px;border-radius:25px;text-decoration:none;font-size:13px;box-shadow:0 4px 18px #0003}
+
+/* Report-period selection shared with the operator workbook */
+.period-public-select{display:flex;align-items:center;gap:8px;font-size:11px;color:#bad8d1}
+.period-public-select select{max-width:150px;color:#e4f5ed;border:1px solid rgba(170,222,208,.3);background:#102a30;border-radius:10px;padding:9px 12px}
+.error.panel a{display:inline-block;margin:10px;color:#91d6c3}
+@media(max-width:760px){.period-public-select span{display:none}.period-public-select select{max-width:105px}.top-actions{flex-wrap:wrap}}
