@@ -111,7 +111,7 @@ export async function onRequestGet({request,env,context}){
   const sourceKey=Array.from(new Uint8Array(digest)).slice(0,8).map(v=>v.toString(16).padStart(2,'0')).join('');
   const forceRefresh=url.searchParams.get('refresh')==='1';
   const cache=globalThis.caches?.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=20.0`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=21.0`);
   const cached=cache&&!forceRefresh?await cache.match(key).catch(()=>null):null;
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -119,7 +119,7 @@ export async function onRequestGet({request,env,context}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=20.0`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=21.0`);
   const cacheId=`${sourceKey}:${year}:${period}`;
   let build=inflight.get(cacheId);
   if(!build){
@@ -159,8 +159,10 @@ export async function onRequestGet({request,env,context}){
       :message.includes('Google OAuth')?'GOOGLE_AUTH_FAILED'
       :Number(error?.status)===403?'GOOGLE_ACCESS_DENIED'
       :Number(error?.status)===404?'SPREADSHEET_NOT_FOUND'
-      :message.includes('SERVICE_DISABLED')?'GOOGLE_SHEETS_API_DISABLED':'GOOGLE_SHEETS_UNAVAILABLE';
+      :message.includes('SERVICE_DISABLED')?'GOOGLE_SHEETS_API_DISABLED'
+      :message.toLowerCase().includes('timeout')?'GOOGLE_TIMEOUT'
+      :Number(error?.status)===429?'GOOGLE_RATE_LIMITED':'GOOGLE_SHEETS_UNAVAILABLE';
     console.error(JSON.stringify({event:'public_dashboard_error',code,message:String(error?.message||''),year,at:new Date().toISOString()}));
-    return new Response(JSON.stringify({error:code==='PERIOD_NOT_INITIALIZED'?'Data periode ini belum dibuat di kertas kerja.':code==='YEAR_NOT_INITIALIZED'?'Data tahun ini belum tersedia di database pusat.':code==='GOOGLE_CONFIG_MISSING'?'Konfigurasi Google Sheets Dashboard belum lengkap. Periksa Variables & Secrets pada proyek SIKAP (Production).':code==='GOOGLE_ACCESS_DENIED'?'Service account Dashboard tidak memiliki izin membaca Google Spreadsheet pusat.':code==='SPREADSHEET_NOT_FOUND'?'ID Spreadsheet Dashboard salah atau file belum dibagikan kepada service account.':code==='GOOGLE_CREDENTIAL_INVALID'?'Kredensial JSON service account Dashboard tidak valid.':code==='GOOGLE_AUTH_FAILED'?'Autentikasi Service Account Google gagal.': 'Dashboard belum dapat mengambil data pusat.',code,missingSheets:undefined,year,period}),{status:code.includes('NOT_INITIALIZED')?404:503,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
+    return new Response(JSON.stringify({error:code==='PERIOD_NOT_INITIALIZED'?'Data periode ini belum dibuat di kertas kerja.':code==='YEAR_NOT_INITIALIZED'?'Data tahun ini belum tersedia di database pusat.':code==='GOOGLE_CONFIG_MISSING'?'Konfigurasi Google Sheets Dashboard belum lengkap. Periksa Variables & Secrets pada proyek SIKAP (Production).':code==='GOOGLE_ACCESS_DENIED'?'Service account Dashboard tidak memiliki izin membaca Google Spreadsheet pusat.':code==='SPREADSHEET_NOT_FOUND'?'ID Spreadsheet Dashboard salah atau file belum dibagikan kepada service account.':code==='GOOGLE_CREDENTIAL_INVALID'?'Kredensial JSON service account Dashboard tidak valid.':code==='GOOGLE_AUTH_FAILED'?'Autentikasi Service Account Google gagal.':code==='GOOGLE_TIMEOUT'?'Pembacaan Google Sheets melampaui batas waktu. Coba lagi setelah beberapa saat.':code==='GOOGLE_RATE_LIMITED'?'Batas permintaan Google Sheets sementara tercapai; dashboard akan mencoba lagi secara berkala.': 'Dashboard belum dapat mengambil data pusat.',code,missingSheets:undefined,year,period}),{status:code.includes('NOT_INITIALIZED')?404:503,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
   }
 }
