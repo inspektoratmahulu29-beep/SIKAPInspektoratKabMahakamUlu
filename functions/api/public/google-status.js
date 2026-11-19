@@ -24,8 +24,8 @@ export async function onRequestGet({ env }) {
     });
   } catch (error) {
     const message = String(error?.message || '');
-    const code = message.includes('403') || message.includes('SERVICE_DISABLED')
-      ? 'GOOGLE_SHEETS_API_DISABLED'
+    const code = message.includes('SERVICE_DISABLED')
+      ? 'GOOGLE_SHEETS_API_DISABLED' : Number(error?.status)===403 ? 'GOOGLE_ACCESS_DENIED'
       : message.includes('Google OAuth')
       ? 'GOOGLE_AUTH_FAILED'
       : 'GOOGLE_SHEETS_UNAVAILABLE';
@@ -35,6 +35,7 @@ export async function onRequestGet({ env }) {
       code,
       message: code === 'GOOGLE_SHEETS_API_DISABLED'
         ? 'Aktifkan Google Sheets API pada project Service Account.'
+        : code==='GOOGLE_ACCESS_DENIED' ? 'Berikan izin Viewer ke email service account Dashboard pada spreadsheet pusat.'
         : 'Koneksi Google Sheets belum berhasil.'
     }), {
       status: 503,
