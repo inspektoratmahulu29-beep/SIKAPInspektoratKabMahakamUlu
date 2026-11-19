@@ -2,6 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
 
+const WORKSHEET_URL=import.meta.env.VITE_KERTAS_KERJA_URL||'https://kkkinerjainspektoaratmahakamulu.pages.dev';
 const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0).replace(/\u00a0/g,' ');
 const num=n=>new Intl.NumberFormat('id-ID',{maximumFractionDigits:0}).format(Number(n)||0);
 const pct=n=>`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})}%`;
@@ -22,7 +23,7 @@ function App(){
       setLoadProgress(v=>Math.max(v,32));
       const headers={};
       if(etagRef.current) headers['If-None-Match']=etagRef.current;
-      const r=await fetch(`/api/public/dashboard?year=${year}&v=12.2`,{headers,cache:'no-store',signal:controller.signal});
+      const r=await fetch(`/api/public/dashboard?year=${year}&v=16.0`,{headers,cache:'no-store',signal:controller.signal});
       if(r.status===304){setError('');setSyncState('live');return;}
       const j=await r.json();
       setLoadProgress(v=>Math.max(v,78));
@@ -104,7 +105,7 @@ function App(){
         <div className="side-foot">Pemantauan kinerja terintegrasi dalam satu tampilan publik.</div>
       </aside>
 
-      <main className="main">
+      <a className="worksheet-link" href={WORKSHEET_URL} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja ↗</a><main className="main">
         <div className="ambient a1"/><div className="ambient a2"/><div className="grid-glow"/>
         <section className="hero">
           <div className="hero-copy">
