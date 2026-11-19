@@ -1,4 +1,4 @@
-import { batchGetSheets, quoteSheet } from '../../lib/google.js';
+import { batchGetSheets, quoteSheet, getSheetTitles } from '../../lib/google.js';
 
 export async function onRequestGet({ env }) {
   if (!env.GOOGLE_SHEETS_SPREADSHEET_ID || !env.GOOGLE_SERVICE_ACCOUNT_JSON) {
@@ -11,7 +11,10 @@ export async function onRequestGet({ env }) {
     });
   }
   try {
-    const result = await batchGetSheets(env, [`${quoteSheet('IKU')}!A1:A1`]);
+    const titles = await getSheetTitles(env);
+    const sample = titles.includes('2026__IKU') ? '2026__IKU' : titles.includes('IKU') ? 'IKU' : titles.find(x => /(?:^|__)IKU$/i.test(x));
+    if(!sample) return new Response(JSON.stringify({ok:false,code:'NO_KERTAS_KERJA',message:'Sheet IKU belum tersedia di spreadsheet pusat.'}),{status:404,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
+    const result = await batchGetSheets(env, [`${quoteSheet(sample)}!A1:A1`]);
     return new Response(JSON.stringify({
       ok: true,
       code: 'GOOGLE_SHEETS_OK',
