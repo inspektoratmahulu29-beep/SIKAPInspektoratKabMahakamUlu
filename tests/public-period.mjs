@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+import {onRequestGet} from '../functions/api/public/dashboard.js';
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
+const keys=await webcrypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+const pk=Buffer.from(await webcrypto.subtle.exportKey('pkcs8',keys.privateKey)).toString('base64');
+const env={GOOGLE_SHEETS_SPREADSHEET_ID:'period-api-test',GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:'test@example.invalid',private_key:`-----BEGIN PRIVATE KEY-----\n${pk}\n-----END PRIVATE KEY-----`})};
+const hits=[];const cache=new Map();
+globalThis.caches={default:{match:async key=>cache.get(key.url)?.clone()||undefined,put:async(key,res)=>cache.set(key.url,res.clone())}};
+let titles=['2026__IKU','2026__Report'];
+globalThis.fetch=async(url)=>{
+ const text=String(url);hits.push(text);
+ if(text.includes('oauth2'))return Response.json({access_token:'fake',expires_in:3600});
+ if(text.includes('values:batchGet'))return Response.json({valueRanges:(new URL(text)).searchParams.getAll('ranges').map(x=>({range:x,values:[]}))});
+ return Response.json({namedRanges:[],sheets:titles.map((title,i)=>({properties:{title,sheetId:i+1,gridProperties:{rowCount:1000,columnCount:26}}}))});
+};
+const url=(period)=>new Request(`https://test.invalid/api/public/dashboard?year=2026&period=${period}`);
+let result=await onRequestGet({request:url('month-13'),env});assert.equal(result.status,400);
+result=await onRequestGet({request:url('month-01'),env});assert.equal(result.status,404,'An uninitialized monthly period must not fall back to annual');
+titles.push('2026__M01__IKU');
+result=await onRequestGet({request:url('month-01'),env});assert.equal(result.status,200);
+const data=await result.json();assert.equal(data.period,'month-01');
+const ranges=hits.filter(x=>x.includes('values:batchGet'));assert.ok(ranges.some(x=>x.includes('2026__M01__IKU')));assert.ok(ranges.every(x=>!x.includes("'2026__IKU'")));
+const cached=await onRequestGet({request:url('month-01'),env});assert.equal(cached.headers.get('x-dashboard-cache'),'HIT');
+console.log('PASS: public dashboard rejects invalid periods, 404 for missing snapshot, reads isolated monthly sheets, and caches period separately.');
