@@ -1,0 +1,1 @@
+Dashboard SIKAP V19: membaca sheet resmi `Laporan_Monev_Renaksi_YYYY` bila ada, menampilkan status terpisah tanpa penghitungan ganda. KPI 14 sheet utama tidak berubah. Lihat pembaruan V19 pada Kertas Kerja.
