@@ -1,6 +1,8 @@
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
-const REQUEST_TIMEOUT_MS = 12000;
+const REQUEST_TIMEOUT_MS = 8500;
+const MAX_ATTEMPTS = 2;
+// Keep total upstream retries below the dashboard's 25-second request deadline for normal failures.
 let tokenCache = null;
 
 function base64url(bytes) {
@@ -19,11 +21,12 @@ function pemToArrayBuffer(pem) {
 
 export async function getGoogleAccessToken(serviceAccountJson) {
   const now = Math.floor(Date.now() / 1000);
-  if (tokenCache && tokenCache.expiresAt - now > 120) return tokenCache.accessToken;
   let sa;
   try { sa = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson; }
   catch { throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON invalid'); }
   if (!sa?.client_email || !sa?.private_key) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON tidak lengkap');
+  const cacheIdentity=`${sa.client_email}:${sa.private_key_id||sa.private_key.slice(-80)}`;
+  if(tokenCache?.identity===cacheIdentity&&tokenCache.expiresAt-now>120)return tokenCache.accessToken;
   const unsigned = `${textBase64url(JSON.stringify({alg:'RS256',typ:'JWT'}))}.${textBase64url(JSON.stringify({
     iss: sa.client_email,
     scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
@@ -33,16 +36,20 @@ export async function getGoogleAccessToken(serviceAccountJson) {
   }))}`;
   const key = await crypto.subtle.importKey('pkcs8', pemToArrayBuffer(sa.private_key), {name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'}, false, ['sign']);
   const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned));
-  const resp = await fetch(TOKEN_URL, {method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},
-    body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion:`${unsigned}.${base64url(new Uint8Array(signature))}`})});
-  if (!resp.ok) throw new Error(`Google OAuth ${resp.status}: ${await resp.text()}`);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),REQUEST_TIMEOUT_MS);
+  let resp;
+  try{resp = await fetch(TOKEN_URL, {method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},signal:controller.signal,
+    body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion:`${unsigned}.${base64url(new Uint8Array(signature))}`})});}
+  catch(error){const e=new Error(error?.name==='AbortError'?'Google OAuth timeout':'Google OAuth network failure');e.status=error?.name==='AbortError'?504:0;throw e;}
+  finally{clearTimeout(timer);}
+  if (!resp.ok) {const e=new Error(`Google OAuth ${resp.status}: ${(await resp.text()).slice(0,400)}`);e.status=resp.status;throw e;}
   const data = await resp.json();
-  tokenCache = { accessToken: data.access_token, expiresAt: now + Number(data.expires_in || 3600) };
+  tokenCache = { identity:cacheIdentity,accessToken: data.access_token, expiresAt: now + Number(data.expires_in || 3600) };
   return data.access_token;
 }
 async function fetchJson(url, options = {}) {
   let last = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -53,13 +60,13 @@ async function fetchJson(url, options = {}) {
       if (resp.ok) return data;
       last = new Error(data?.error?.message || `Google Sheets ${resp.status}`);
       last.status = resp.status;
-      if (![429,500,502,503,504].includes(resp.status) || attempt === 2) break;
+      if (![429,500,502,503,504].includes(resp.status) || attempt === MAX_ATTEMPTS - 1) break;
       const retryAfter = Number(resp.headers.get('retry-after') || 0);
       await new Promise(r => setTimeout(r, retryAfter ? Math.min(5000, retryAfter*1000) : 300*(2**attempt)));
     } catch (e) {
       last = e?.name === 'AbortError' ? new Error('Google Sheets request timeout') : e;
-      last.status = 504;
-      if (attempt === 2) break;
+      last.status = e?.name === 'AbortError' ? 504 : 0;
+      if (attempt === MAX_ATTEMPTS - 1) break;
       await new Promise(r => setTimeout(r, 350*(2**attempt)));
     } finally { clearTimeout(timer); }
   }
