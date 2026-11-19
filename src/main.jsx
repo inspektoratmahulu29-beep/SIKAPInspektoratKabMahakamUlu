@@ -11,38 +11,41 @@ const initialQuery=new URLSearchParams(window.location.search);
 const initialPeriod=PERIOD_OPTIONS.some(x=>x.value===initialQuery.get('period'))?initialQuery.get('period'):'annual';
 const initialYear=/^20\d{2}$/.test(initialQuery.get('year')||'')?Number(initialQuery.get('year')):2026;
 
-const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0).replace(/\u00a0/g,' ');
-const num=n=>new Intl.NumberFormat('id-ID',{maximumFractionDigits:0}).format(Number(n)||0);
-const pct=n=>`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})}%`;
+const money=n=>(n==null||n==='')?'—':new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0).replace(/\u00a0/g,' ');
+const num=n=>(n==null||n==='')?'—':new Intl.NumberFormat('id-ID',{maximumFractionDigits:0}).format(Number(n)||0);
+const pct=n=>(n==null||n==='')?'—':`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})}%`;
 const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
+const outputTotal=k=>(k.outputUtama==null||k.outputPenunjang==null)?null:Number(k.outputUtama)+Number(k.outputPenunjang);
 
 function App(){
   const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8),[year,setYear]=useState(initialYear),[period,setPeriod]=useState(initialPeriod),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
   const etagRef=React.useRef('');
   const requestRef=React.useRef(null);
 
-  const load=async()=>{
-    if(requestRef.current) return;
+  const load=async(force=false)=>{
+    if(requestRef.current){if(!force)return;requestRef.current.abort();requestRef.current=null;}
     setLoadProgress(v=>Math.max(v,18));
     const controller=new AbortController();
     requestRef.current=controller;
-    const timer=setTimeout(()=>controller.abort(),12000);
+    let timedOut=false;
+    const timer=setTimeout(()=>{timedOut=true;controller.abort();},30000);
     try{
       setLoadProgress(v=>Math.max(v,32));
       const headers={};
-      if(etagRef.current) headers['If-None-Match']=etagRef.current;
-      const r=await fetch(`/api/public/dashboard?year=${year}&period=${encodeURIComponent(period)}&v=17.0`,{headers,cache:'no-store',signal:controller.signal});
-      if(r.status===304){setError('');setSyncState('live');return;}
+      // Browser refresh must not receive a 304 without a snapshot in memory.
+      const r=await fetch(`/api/public/dashboard?year=${year}&period=${encodeURIComponent(period)}&v=20.0${force?'&refresh=1':''}`, {headers,cache:'no-store',signal:controller.signal});
+      if(r.status===304)throw new Error('Server mengembalikan 304 tanpa snapshot; muat kembali.');
       const j=await r.json();
       setLoadProgress(v=>Math.max(v,78));
-      if(!r.ok) throw new Error(j.message||j.error||`HTTP ${r.status}`);
+      if(!r.ok) throw new Error(`${j.code?'['+j.code+'] ':''}${j.message||j.error||`HTTP ${r.status}`}`);
       const tag=r.headers.get('etag'); if(tag) etagRef.current=tag;
       setData(j);setLoadProgress(100);setError('');setLastSync(new Date());setSyncState(r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live');
     }catch(e){
-      // Keep the last good snapshot visible so public viewers do not see a blank
-      // dashboard during a short Google/Internet outage.
+      // Ignore cancellation caused by switching year/period or a newer retry.
+      // A real 15-second TIMEOUT is not such a cancellation: show it clearly.
+      if(controller.signal.aborted&&!timedOut)return;
       setSyncState('offline');
-      if(!controller.signal.aborted) setError(e.name==='AbortError'?'Koneksi sumber data terlalu lambat.':e.message||'Data belum dapat ditampilkan.');
+      setError(timedOut||e.name==='AbortError'?'Koneksi Dashboard melewati 30 detik. Periksa /api/public/connection dan coba muat ulang.':e.message||'Data belum dapat ditampilkan.');
     }finally{
       clearTimeout(timer);
       if(requestRef.current===controller){requestRef.current=null;setLoadProgress(100);setLoading(false);}
@@ -62,7 +65,7 @@ function App(){
     load();
     const tick=()=>{ if(document.visibilityState==='visible') load(); };
     const onVisibility=()=>{ if(document.visibilityState==='visible') load(); };
-    const t=setInterval(tick,5000);
+    const t=setInterval(tick,12000);
     const p=setInterval(()=>setPulse(v=>v+1),1800);
     document.addEventListener('visibilitychange',onVisibility);
     return()=>{cancelled=true;clearInterval(t);clearInterval(p);document.removeEventListener('visibilitychange',onVisibility);requestRef.current?.abort();requestRef.current=null};
@@ -75,7 +78,7 @@ function App(){
     {id:'serapan',label:'Serapan Keuangan',value:pct(k.serapan),note:'Realisasi dibandingkan total anggaran',icon:'%',tone:'mint',progress:clamp(k.serapan)},
     {id:'physical',label:'Realisasi Fisik',value:pct(k.realisasiFisik),note:'Capaian fisik resmi/tertimbang dari sumber',icon:'◌',tone:'blue',progress:clamp(k.realisasiFisik)},
     {id:'pkpt',label:'Penugasan PKPT',value:num(k.penugasan),note:`${num(k.selesai)} selesai • ${num(k.berjalan)} berjalan • ${num(k.belum)} belum`,icon:'◎',tone:'violet'},
-    {id:'output',label:'Total Output',value:num((k.outputUtama||0)+(k.outputPenunjang||0)),note:`Utama ${num(k.outputUtama)} • Penunjang ${num(k.outputPenunjang)}`,icon:'▦',tone:'rose'}
+    {id:'output',label:'Total Output',value:num(outputTotal(k)),note:`Utama ${num(k.outputUtama)} • Penunjang ${num(k.outputPenunjang)}`,icon:'▦',tone:'rose'}
   ],[k]);
 
   const sourceTitle=tab==='dashboard'?'SISTEM INFORMASI KINERJA DAN PENGAWASAN':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
@@ -95,7 +98,8 @@ function App(){
         </div>
       </div>
       <div className="top-actions">
-        <div className={`realtime status-${syncState}`}><span className="live-dot"/> {syncState==='live'?'REALTIME':syncState==='stale'?'DATA TERAKHIR':'MENUNGGU SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <div className={`realtime status-${syncState}`}><span className="live-dot"/> {syncState==='live'?'REALTIME':syncState==='stale'?'DATA TERAKHIR':syncState==='offline'?'KONEKSI TERPUTUS':'MENUNGGU SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <button type="button" className="manual-refresh" onClick={()=>load(true)} title="Ambil ulang data dari sumber">↻ Muat ulang</button>
         <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
         <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>setPeriod(e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label>
       </div>
@@ -135,7 +139,9 @@ function App(){
           </div>
         </section>
 
-        {loading&&!data?<LoadingScreen progress={loadProgress}/>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><a href={`${WORKSHEET_URL}?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}`} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja untuk menyiapkan data periode</a><button onClick={load}>Muat kembali</button></div>:<>
+        {loading&&!data?<LoadingScreen progress={loadProgress}/>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><a href={`${WORKSHEET_URL}?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}`} target="_blank" rel="noopener noreferrer">Buka Kertas Kerja untuk menyiapkan data periode</a><a href="/api/public/connection" target="_blank" rel="noopener noreferrer">Periksa koneksi Dashboard</a><button onClick={()=>load(true)}>Muat kembali</button></div>:<>
+          {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet utama)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0. Lengkapi melalui Kertas Kerja kemudian klik Muat ulang.</p><a href="/api/public/connection" target="_blank" rel="noopener noreferrer">Periksa koneksi dan daftar sheet</a></div>}
+          {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang berhasil dibaca</b><p>{error}</p><button onClick={()=>load(true)}>Coba lagi</button></div>}
           {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={setActiveKpi}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={setActiveKpi}/>} 
           {tab==='kinerja'&&<Kinerja k={k}/>} 
@@ -182,6 +188,7 @@ function Dashboard({cards,k,data,onKpi}){return <>
     {typeof c.progress==='number'&&<div className="mini-progress"><i style={{width:`${c.progress}%`}}/></div>}
   </button>)}</div>
 
+  <section className="panel official-monev-panel"><div className="panel-title"><span>SUMBER EXCEL TERBARU</span><b>Laporan Monitoring & Evaluasi Renaksi Resmi</b><small>{data?.officialReport?.name||'Laporan_Monev_Renaksi_2026'}</small></div>{data?.officialReport?.available?<><div className="official-monev-values"><div><small>KEGIATAN DENGAN PAGU</small><strong>{num(data.officialReport.activities)}</strong></div><div><small>ANGGARAN DALAM LAPORAN</small><strong>{money(data.officialReport.plannedBudget)}</strong></div><div><small>REALISASI KEUANGAN LAPORAN</small><strong>{data.officialReport.realizedBudget===null?'Belum diisi':money(data.officialReport.realizedBudget)}</strong></div><div><small>REALISASI BELUM DIISI</small><strong>{num(data.officialReport.missingRealizations)} kegiatan</strong></div></div><p>Angka laporan resmi dihitung dari kolom O, T, dan U pada Excel, terpisah dari KPI keuangan induk. Kolom U kosong pada file acuan; nilai kosong tidak dianggap Rp0.</p></>:<p>Sheet resmi untuk periode ini belum tersedia. Tambahkan melalui website Kertas Kerja menggunakan template Excel terbaru; KPI utama tetap berasal dari 14 sheet lama.</p>}</section>
   <div className="dashboard-grid">
     <section className="panel panel-large gauge-panel">
       <div className="panel-title"><span>REALISASI KEUANGAN</span><b>Serapan Anggaran</b><small>{pct(k.serapan)}</small></div>
@@ -203,30 +210,30 @@ function Dashboard({cards,k,data,onKpi}){return <>
 
     <section className="panel pkpt-panel">
       <div className="panel-title"><span>STATUS PKPT</span><b>Progress Penugasan</b><small>{num(k.penugasan)} total</small></div>
-      <div className="stack"><i style={{width:`${ratio(k.selesai,k.penugasan)}%`}}/><i style={{width:`${ratio(k.berjalan,k.penugasan)}%`}}/><i style={{width:`${ratio(k.belum,k.penugasan)}%`}}/></div>
+      <div className="stack"><i style={{width:`${ratio(k.selesai,k.penugasan)||0}%`}}/><i style={{width:`${ratio(k.berjalan,k.penugasan)}%`}}/><i style={{width:`${ratio(k.belum,k.penugasan)}%`}}/></div>
       <div className="legend"><span><i className="done"/>Selesai <b>{num(k.selesai)}</b></span><span><i className="running"/>Berjalan <b>{num(k.berjalan)}</b></span><span><i className="pending"/>Belum <b>{num(k.belum)}</b></span></div>
       <div className="output"><div><small>OUTPUT UTAMA</small><b>{num(k.outputUtama)}</b></div><div><small>OUTPUT PENUNJANG</small><b>{num(k.outputPenunjang)}</b></div></div>
     </section>
   </div>
 
   <section className="panel coverage">
-    <div className="panel-title"><span>CAKUPAN KERTAS KERJA</span><b>Capaian & kelengkapan tiap sumber</b><small>{pct(data?.overallCompleteness)} rata-rata</small></div>
-    <div className="coverage-grid">{(data?.sheets||[]).map(s=><div className="coverage-item" key={s.name}><div><b>{s.name}</b><span>{pct(s.percent)}</span></div><div className="track"><i style={{width:`${clamp(s.percent)}%`}}/></div></div>)}</div>
+    <div className="panel-title"><span>CAKUPAN KERTAS KERJA</span><b>Cakupan baris berisi per sumber (indikatif)</b><small>{pct(data?.overallCompleteness)} baris terisi</small></div>
+    <div className="coverage-grid">{(data?.sheets||[]).map(s=><div className={`coverage-item ${s.available===false?'source-unavailable':''}`} key={s.name}><div><b>{s.name}</b><span>{pct(s.percent)}</span></div><div className="track"><i style={{width:`${clamp(s.percent)}%`}}/></div></div>)}</div>
   </section>
 
   <section className="summary-strip">
     <div className="summary-label"><span>RINGKASAN KINERJA</span><b>Indikator utama dashboard</b></div>
-    <div className="summary-item"><strong>{pct((k.capaian?.strategic||0))}</strong><span>Capaian strategis</span></div>
+    <div className="summary-item"><strong>{pct(k.capaian?.strategic)}</strong><span>Capaian strategis</span></div>
     <div className="summary-item"><strong>{num(k.outputUtama)}</strong><span>Output utama</span></div>
     <div className="summary-item"><strong>{num(k.penugasan)}</strong><span>Penugasan PKPT</span></div>
-    <div className="summary-item"><strong>{pct(data?.overallCompleteness)}</strong><span>Kelengkapan sumber</span></div>
+    <div className="summary-item"><strong>{pct(data?.overallCompleteness)}</strong><span>Cakupan baris (indikatif)</span></div>
   </section>
 </>}
 
-function ratio(a,b){return b?Math.max(0,Math.min(100,(Number(a||0)/Number(b||0))*100)):0}
+function ratio(a,b){return a==null||b==null?null:b?Math.max(0,Math.min(100,(Number(a||0)/Number(b||0))*100)):0}
 function Realisasi({k,onKpi}){const rows=[['Total Anggaran',money(k.totalAnggaran)],['Realisasi Keuangan',money(k.realisasiKeuangan)],['Sisa Dana',money(k.sisaDana)],['Serapan Keuangan',pct(k.serapan)],['Realisasi Fisik',pct(k.realisasiFisik)]];return <section><div className="section-title"><span>ANALITIK REALISASI</span><h2>Fisik & Keuangan</h2><p>Ringkasan indikator realisasi yang dibaca langsung dari sumber kinerja.</p></div><div className="metric-list">{rows.map(([a,b])=><button key={a} onClick={()=>onKpi({label:a,value:b,note:'Nilai dihitung dan dibaca dari sumber data pusat.'})}><span>{a}</span><strong>{b}</strong><em>↗</em></button>)}</div><div className="panel formula"><span>LOGIKA PERHITUNGAN</span><b>Serapan Keuangan = Realisasi Keuangan ÷ Anggaran × 100</b><b>Realisasi Fisik = nilai fisik resmi/tertimbang dari sumber</b><b>Sisa Dana = Anggaran − Realisasi Keuangan</b></div></section>}
 function Kinerja({k}){const items=[['Sasaran Strategis',k.capaian?.strategic],['Sasaran Program',k.capaian?.program],['Kegiatan Utama',k.capaian?.kegiatanUtama],['Kegiatan Penunjang',k.capaian?.kegiatanPenunjang],['Subkegiatan Utama',k.capaian?.subUtama],['Subkegiatan Penunjang',k.capaian?.subPenunjang],['Monev Renaksi IKU',k.capaian?.renaksi],['Monev Program',k.capaian?.monevProgram]];return <section><div className="section-title"><span>MONITORING</span><h2>Kinerja & Evaluasi</h2><p>Perbandingan capaian antar kelompok sumber dalam tampilan visual yang ringkas.</p></div><div className="performance-grid">{items.map(([n,v])=><div className="perf panel" key={n}><div><b>{n}</b><strong>{pct(v)}</strong></div><div className="track"><i style={{width:`${clamp(v)}%`}}/></div></div>)}</div></section>}
-function Penugasan({k}){return <section><div className="section-title"><span>PKPT</span><h2>Progress Penugasan</h2><p>Ringkasan status penugasan dan jumlah output pada tahun anggaran terpilih.</p></div><div className="pen-grid"><div className="big-num panel"><strong>{num(k.penugasan)}</strong><span>Total penugasan</span></div>{[['Selesai',k.selesai],['Berjalan',k.berjalan],['Belum',k.belum]].map(([n,v])=><div className="status panel" key={n}><small>{n}</small><strong>{num(v)}</strong><span>{pct(ratio(v,k.penugasan))} dari total</span></div>)}</div><div className="panel output-grid"><div><small>OUTPUT UTAMA</small><strong>{num(k.outputUtama)}</strong></div><div><small>OUTPUT PENUNJANG</small><strong>{num(k.outputPenunjang)}</strong></div><div><small>TOTAL OUTPUT</small><strong>{num((k.outputUtama||0)+(k.outputPenunjang||0))}</strong></div></div></section>}
+function Penugasan({k}){return <section><div className="section-title"><span>PKPT</span><h2>Progress Penugasan</h2><p>Ringkasan status penugasan dan jumlah output pada tahun anggaran terpilih.</p></div><div className="pen-grid"><div className="big-num panel"><strong>{num(k.penugasan)}</strong><span>Total penugasan</span></div>{[['Selesai',k.selesai],['Berjalan',k.berjalan],['Belum',k.belum]].map(([n,v])=><div className="status panel" key={n}><small>{n}</small><strong>{num(v)}</strong><span>{pct(ratio(v,k.penugasan))} dari total</span></div>)}</div><div className="panel output-grid"><div><small>OUTPUT UTAMA</small><strong>{num(k.outputUtama)}</strong></div><div><small>OUTPUT PENUNJANG</small><strong>{num(k.outputPenunjang)}</strong></div><div><small>TOTAL OUTPUT</small><strong>{num(outputTotal(k))}</strong></div></div></section>}
 function KpiModal({kpi,k,onClose}){return <div className="modal-back" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><button className="close" onClick={onClose}>×</button><span className="eyebrow">DETAIL KPI • INSPEKTORAT MAHAKAM ULU</span><h2>{kpi.label}</h2><div className="modal-number">{kpi.value}</div><p>{kpi.note}</p><div className="modal-grid"><div><small>ANGGARAN</small><b>{money(k.totalAnggaran)}</b></div><div><small>REALISASI</small><b>{money(k.realisasiKeuangan)}</b></div><div><small>FISIK</small><b>{pct(k.realisasiFisik)}</b></div><div><small>PKPT</small><b>{num(k.penugasan)}</b></div></div><div className="formula-box"><small>DATA</small><b>Inspektorat Kabupaten Mahakam Ulu • TA berjalan</b><span>Pembaruan data berlangsung otomatis.</span></div></div></div>}
 
 createRoot(document.getElementById('root')).render(<App/>);

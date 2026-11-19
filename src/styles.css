@@ -98,3 +98,11 @@ html{scroll-behavior:smooth}body{overflow-x:hidden;-webkit-tap-highlight-color:t
 .period-public-select select{max-width:150px;color:#e4f5ed;border:1px solid rgba(170,222,208,.3);background:#102a30;border-radius:10px;padding:9px 12px}
 .error.panel a{display:inline-block;margin:10px;color:#91d6c3}
 @media(max-width:760px){.period-public-select span{display:none}.period-public-select select{max-width:105px}.top-actions{flex-wrap:wrap}}
+
+/* V19 - official Monev Renaksi reporting, intentionally separate from main financial KPI */
+.official-monev-panel{margin:0 0 24px}.official-monev-panel p{color:var(--muted);font-size:12px;line-height:1.6;margin:14px 0 0}.official-monev-values{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.official-monev-values>div{min-width:0;background:rgba(255,255,255,.035);border:1px solid var(--line);padding:16px;border-radius:14px}.official-monev-values small{display:block;color:var(--muted);font-size:10px;letter-spacing:.07em;margin-bottom:10px}.official-monev-values strong{display:block;color:var(--text);font-size:clamp(14px,1.6vw,21px);overflow-wrap:anywhere}@media(max-width:970px){.official-monev-values{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.official-monev-values{grid-template-columns:1fr}}
+
+/* V20: non-blocking dashboard reload and transparent source integrity */
+.manual-refresh{border:1px solid rgba(255,255,255,.15);border-radius:11px;background:rgba(255,255,255,.055);color:inherit;padding:10px 12px;cursor:pointer;font:inherit;white-space:nowrap}.manual-refresh:hover{background:rgba(255,255,255,.13)}
+.sources-warning{margin:0 0 18px;padding:14px 18px;border-radius:14px;border:1px solid rgba(224,176,87,.48);background:rgba(224,176,87,.075);color:var(--text);font-size:13px;line-height:1.65}.sources-warning b{display:block;font-size:14px}.sources-warning p{margin:5px 0}.sources-warning a{color:inherit;text-decoration:underline}.sources-warning button{margin-top:10px;padding:7px 11px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}.source-unavailable{opacity:.62}.source-unavailable .track i{width:0!important}
+@media(max-width:900px){.manual-refresh{padding:8px;font-size:12px}}
