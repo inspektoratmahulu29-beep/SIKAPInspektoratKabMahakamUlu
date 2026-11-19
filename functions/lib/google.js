@@ -66,10 +66,10 @@ async function fetchJson(url, options = {}) {
   throw last || new Error('Google Sheets unavailable');
 }
 
-async function sheetsMeta(env) {
+export async function sheetsMeta(env) {
   if (!env.GOOGLE_SHEETS_SPREADSHEET_ID) throw new Error('GOOGLE_SHEETS_SPREADSHEET_ID belum diatur');
   const token = await getGoogleAccessToken(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  return fetchJson(`${SHEETS_API}/${encodeURIComponent(env.GOOGLE_SHEETS_SPREADSHEET_ID)}?fields=spreadsheetId,sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)))`, {
+  return fetchJson(`${SHEETS_API}/${encodeURIComponent(env.GOOGLE_SHEETS_SPREADSHEET_ID)}?fields=spreadsheetId,namedRanges,sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)))`, {
     headers:{Authorization:`Bearer ${token}`}
   });
 }
