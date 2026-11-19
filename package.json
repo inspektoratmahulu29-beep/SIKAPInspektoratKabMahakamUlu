@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run check:backend && vite build",
     "preview": "vite preview",
     "check:backend": "node scripts/check-backend.mjs",
     "test": "node tests/public-period.mjs"
