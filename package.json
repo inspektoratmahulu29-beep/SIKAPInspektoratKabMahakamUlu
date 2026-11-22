@@ -1,14 +1,14 @@
 {
   "name": "dashboard-realisasi-kinerja-mahakam-ulu-public",
   "private": true,
-  "version": "23.0.0",
+  "version": "24.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "npm run check:backend && vite build",
     "preview": "vite preview",
     "check:backend": "node scripts/check-backend.mjs",
-    "test": "node tests/public-period.mjs && node tests/official-report.mjs && node tests/connection-reload.mjs && node tests/v22-resilience.mjs && node tests/import-formula-health.mjs"
+    "test": "node tests/public-period.mjs && node tests/official-report.mjs && node tests/connection-reload.mjs && node tests/v22-resilience.mjs && node tests/import-formula-health.mjs && node tests/pkpt-details.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.3",
