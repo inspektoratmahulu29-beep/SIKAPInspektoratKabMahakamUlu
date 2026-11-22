@@ -19,6 +19,6 @@ const body=await res.json();
 assert.equal(body.formulaHealth.errorsFound,2);
 assert.ok(body.formulaHealth.examples.some(x=>x.error==='#REF!'));
 assert.ok(body.formulaHealth.examples.some(x=>x.error==='#DIV/0!'));
-assert.equal(body.version,'23.0-public-formula-health');
+assert.equal(body.version,'24.0-public-pkpt-explorer');
 assert.equal(body.kpi.totalAnggaran,null,'Do not show a plausible-looking financial total from a corrupt source');
 console.log('PASS: Web 2 detects and reports Google Sheets #REF! and #DIV/0! without displaying false success.');
