@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+import {onRequestGet} from '../functions/api/public/dashboard.js';
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
+const keys=await webcrypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+const pk=Buffer.from(await webcrypto.subtle.exportKey('pkcs8',keys.privateKey)).toString('base64');
+const env={GOOGLE_SHEETS_SPREADSHEET_ID:'dashboard-error-mock',GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:'test@example.invalid',private_key:`-----BEGIN PRIVATE KEY-----\n${pk}\n-----END PRIVATE KEY-----`})};
+const names=['IKU','Rencana Aksi','Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)','Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama','Monev Subkegiatan Penunjang','Rekap realisasi PKPT','Realisasi Fisik & Keu'];
+globalThis.caches={default:{match:async()=>undefined,put:async()=>{}}};
+globalThis.fetch=async(u)=>{
+ const url=String(u);
+ if(url.includes('oauth2'))return Response.json({access_token:'mock',expires_in:3600});
+ if(url.includes('/values:batchGet'))return Response.json({valueRanges:new URL(url).searchParams.getAll('ranges').map(r=>({range:r,values:[['Sumber','Hasil'],['Data',r.includes('Realisasi Fisik')?'#REF!':r.includes('Monev output')?'#DIV/0!':'42']]}))});
+ return Response.json({namedRanges:[],sheets:names.map((n,i)=>({properties:{title:`2026__${n}`,sheetId:i+1,gridProperties:{rowCount:1000,columnCount:26}}}))});
+};
+const res=await onRequestGet({request:new Request('https://test.invalid/api/public/dashboard?year=2026&period=annual&refresh=1'),env});
+assert.equal(res.status,200);
+const body=await res.json();
+assert.equal(body.formulaHealth.errorsFound,2);
+assert.ok(body.formulaHealth.examples.some(x=>x.error==='#REF!'));
+assert.ok(body.formulaHealth.examples.some(x=>x.error==='#DIV/0!'));
+assert.equal(body.version,'23.0-public-formula-health');
+assert.equal(body.kpi.totalAnggaran,null,'Do not show a plausible-looking financial total from a corrupt source');
+console.log('PASS: Web 2 detects and reports Google Sheets #REF! and #DIV/0! without displaying false success.');
