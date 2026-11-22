@@ -1,4 +1,5 @@
 import {calculateMetrics} from '../../lib/metrics.js';
+import {extractPkptDetails} from '../../lib/pkpt-details.js';
 import {officialReportName,summarizeOfficialMonev} from '../../lib/report-schema.js';
 import { getSheetTitles, sheetsMeta, batchGetSheets, quoteSheet } from '../../lib/google.js';
 
@@ -90,10 +91,17 @@ async function buildSnapshot(env, year, period='annual') {
     }
   }
   const kpi=calculateMetrics(metricSheets);
+  const pkpt=extractPkptDetails(metricSheets['Rekap realisasi PKPT']);
   // Dependent KPIs must be explicitly unknown when their source does not exist.
   const absent=new Set([...missing,...emptySheets]);
   if(absent.has('Realisasi Fisik & Keu')||invalidSourceSheets.has('Realisasi Fisik & Keu')) for(const field of ['totalAnggaran','realisasiKeuangan','realisasiFisik','serapan','sisaDana'])kpi[field]=null;
-  if(absent.has('Rekap realisasi PKPT')||invalidSourceSheets.has('Rekap realisasi PKPT'))for(const field of ['penugasan','selesai','berjalan','belum','lainnya'])kpi[field]=null;
+  if(absent.has('Rekap realisasi PKPT')||invalidSourceSheets.has('Rekap realisasi PKPT')){
+    for(const field of ['penugasan','selesai','berjalan','belum','lainnya'])kpi[field]=null;
+    pkpt.available=false;pkpt.items=[];pkpt.summary=null;pkpt.irban=[];pkpt.kegiatan=[];pkpt.pengawasan=[];
+  }else{
+    // Summary and detail must always describe the exact same PKPT rows.
+    for(const [target,field] of [['penugasan','total'],['selesai','selesai'],['berjalan','berjalan'],['belum','belum'],['lainnya','lainnya']])kpi[target]=pkpt.summary[field];
+  }
   if(absent.has('Monev output Subkegiatan Utama')||invalidSourceSheets.has('Monev output Subkegiatan Utama'))kpi.outputUtama=null;
   if(absent.has('Monev Subkegiatan Penunjang')||invalidSourceSheets.has('Monev Subkegiatan Penunjang'))kpi.outputPenunjang=null;
   const monevResmi=kpi.monevResmi||summarizeOfficialMonev(null);
@@ -101,7 +109,7 @@ async function buildSnapshot(env, year, period='annual') {
   const available=sheets.filter(s=>s.available);
   const overall=available.length?percentAverage(available.map(s=>s.percent)):null;
   if(reportTitle)sheets.push({name:report,percent:monevResmi.activities?monevResmi.reportedRealizations/monevResmi.activities*100:0,rows:byName[report]?.length||0,measure:'Realisasi kegiatan terisi'});
-  return {formulaHealth:{errorsFound:formulaErrorCount,examples:formulaErrors},partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:SHEETS.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'23.0-public-formula-health',kpi,sheets,overallCompleteness:overall,formulas:{
+  return {pkpt,formulaHealth:{errorsFound:formulaErrorCount,examples:formulaErrors},partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:SHEETS.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'24.0-public-pkpt-explorer',kpi,sheets,overallCompleteness:overall,formulas:{
     totalAnggaran:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     realisasiKeuangan:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     serapan:'Realisasi Keuangan ÷ Anggaran × 100', realisasiFisik:'Nilai fisik resmi/tertimbang dari sumber',
@@ -123,14 +131,14 @@ export async function onRequestGet({request,env,context}){
   const sourceKey=Array.from(new Uint8Array(digest)).slice(0,8).map(v=>v.toString(16).padStart(2,'0')).join('');
   const forceRefresh=url.searchParams.get('refresh')==='1';
   const cache=globalThis.caches?.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=23.0`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=24.0`);
   const cached=cache&&!forceRefresh?await cache.match(key).catch(()=>null):null;
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
     out.headers.set('cache-control','no-store');
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=23.0`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=24.0`);
   const cacheId=`${sourceKey}:${year}:${period}`;
   let build=inflight.get(cacheId);
   if(!build){
