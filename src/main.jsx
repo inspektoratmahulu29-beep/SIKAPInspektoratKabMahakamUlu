@@ -2,6 +2,7 @@ import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
 import PkptExplorer,{PkptPreview} from './PkptExplorer.jsx';
+import FinanceExplorer,{FinancePreview} from './FinanceExplorer.jsx';
 
 const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
  ...Array.from({length:12},(_,i)=>({value:`month-${String(i+1).padStart(2,'0')}`,label:new Intl.DateTimeFormat('id-ID',{month:'long'}).format(new Date(2026,i,1))})),
@@ -22,7 +23,7 @@ function App(){
   const [loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8);
   const [year,setYear]=useState(initialYear),[period,setPeriod]=useState(initialPeriod);
   const [years,setYears]=useState([...new Set([2026,initialYear])].sort((a,b)=>b-a));
-  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[pulse,setPulse]=useState(0);
+  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[financeExplorer,setFinanceExplorer]=useState(null),[pulse,setPulse]=useState(0);
   const [lastSync,setLastSync]=useState(null),[lastAttempt,setLastAttempt]=useState(null),[syncState,setSyncState]=useState('connecting');
   const [attemptCount,setAttemptCount]=useState(0),[diagnostic,setDiagnostic]=useState(null),[checking,setChecking]=useState(false);
   // A snapshot from another year/period must never appear under the newly selected heading.
@@ -39,7 +40,7 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'24.0'});
+      const params=new URLSearchParams({year:String(year),period,v:'25.0'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
@@ -100,8 +101,11 @@ function App(){
 
   const k=data?.kpi||{};
   const closePkpt=useCallback(()=>setPkptExplorer(null),[]);
+  const closeFinance=useCallback(()=>setFinanceExplorer(null),[]);
+  const openFinance=useCallback(mode=>setFinanceExplorer(['physical','budget','serapan','financial'].includes(mode)?mode:'financial'),[]);
   const openKpi=useCallback((detail)=>{
     if(detail?.id==='pkpt')setPkptExplorer({status:detail.status||'all'});
+    else if(['budget','financial','physical','serapan','remaining'].includes(detail?.id))setFinanceExplorer(detail.id==='remaining'?'financial':detail.id);
     else setActiveKpi(detail);
   },[]);
   const cards=useMemo(()=>[
@@ -176,8 +180,8 @@ function App(){
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
           {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet utama)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
-          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer}/>} 
-          {tab==='realisasi'&&<Realisasi k={k} onKpi={setActiveKpi}/>} 
+          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer} onFinance={openFinance}/>} 
+          {tab==='realisasi'&&<Realisasi k={k} onKpi={openKpi} finance={data?.financialDetails} onFinance={openFinance}/>} 
           {tab==='kinerja'&&<Kinerja k={k} onKpi={setActiveKpi}/>} 
           {tab==='penugasan'&&<Penugasan k={k} onKpi={openKpi} pkpt={data?.pkpt} onPkpt={setPkptExplorer}/>} 
         </>}
@@ -185,6 +189,7 @@ function App(){
       </main>
     </div>
     {pkptExplorer&&<PkptExplorer pkpt={data?.pkpt} year={year} period={period} initial={pkptExplorer} onClose={closePkpt}/>}
+    {financeExplorer&&<FinanceExplorer finance={data?.financialDetails} kpi={k} year={year} period={period} initialMode={financeExplorer} onClose={closeFinance}/>}
     {activeKpi&&<KpiModal kpi={activeKpi} k={k} data={data} year={year} period={period} onClose={()=>setActiveKpi(null)}/>} 
   </div>
 }
@@ -253,12 +258,13 @@ function MetricIcon({id}){
   </svg>;
 }
 
-function Dashboard({cards,k,data,onKpi,onPkpt}){return <>
+function Dashboard({cards,k,data,onKpi,onPkpt,onFinance}){return <>
   <div className="kpis">{cards.map(c=><button type="button" aria-label={`Lihat detail ${c.label}`} className={`kpi tone-${c.tone}`} key={c.id} onClick={()=>onKpi(c)}>
     <div className="kpi-head"><span className="kpi-icon"><MetricIcon id={c.id}/></span><span className="kpi-link">LIHAT GRAFIK <b>↗</b></span></div>
     <label>{c.label}</label><strong title={c.value}>{c.value}</strong><p>{c.note}</p>
     {typeof c.progress==='number'?<div className="mini-progress"><i style={{width:`${c.progress}%`}}/></div>:<div className="kpi-decor-svg"><svg viewBox="0 0 140 24" aria-hidden="true"><path d="M2 19 Q18 14 30 16 T58 11 T86 14 T112 7 T138 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="138" cy="8" r="3" fill="currentColor"/></svg></div>}
   </button>)}</div>
+  <FinancePreview finance={data?.financialDetails} onOpen={onFinance}/>
 
   <section className="panel official-monev-panel"><div className="panel-title"><span>SUMBER EXCEL TERBARU</span><b>Laporan Monitoring & Evaluasi Renaksi Resmi</b><small>{data?.officialReport?.name||'Laporan_Monev_Renaksi_2026'}</small></div>{data?.officialReport?.available?<><div className="official-monev-values"><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Kegiatan Monev Resmi',value:num(data.officialReport.activities),note:'Kegiatan dengan pagu anggaran pada sheet laporan resmi'})}><small>KEGIATAN DENGAN PAGU</small><strong>{num(data.officialReport.activities)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Anggaran Laporan Monev',value:money(data.officialReport.plannedBudget),note:'Total pagu pada sheet laporan resmi, tidak digandakan pada KPI utama'})}><small>ANGGARAN DALAM LAPORAN</small><strong>{money(data.officialReport.plannedBudget)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Realisasi Laporan Monev',value:money(data.officialReport.realizedBudget),note:'Belum diisi berarti tidak ada angka, bukan nol'})}><small>REALISASI KEUANGAN LAPORAN</small><strong>{data.officialReport.realizedBudget===null?'Belum diisi':money(data.officialReport.realizedBudget)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Realisasi Belum Diisi',value:num(data.officialReport.missingRealizations),note:'Jumlah kegiatan dengan nilai realisasi belum tersedia'})}><small>REALISASI BELUM DIISI</small><strong>{num(data.officialReport.missingRealizations)} kegiatan</strong></button></div><p>Angka laporan resmi dihitung dari kolom O, T, dan U pada Excel, terpisah dari KPI keuangan induk. Kolom U kosong pada file acuan; nilai kosong tidak dianggap Rp0.</p></>:<p>Sheet laporan resmi belum ditemukan pada sumber data periode ini. KPI utama tetap berasal dari sheet inti yang tersedia.</p>}</section>
   <div className="dashboard-grid">
@@ -305,7 +311,14 @@ function Dashboard({cards,k,data,onKpi,onPkpt}){return <>
 </>}
 
 function ratio(a,b){return a==null||b==null?null:b?Math.max(0,Math.min(100,(Number(a||0)/Number(b||0))*100)):0}
-function Realisasi({k,onKpi}){const rows=[['Total Anggaran',money(k.totalAnggaran)],['Realisasi Keuangan',money(k.realisasiKeuangan)],['Sisa Dana',money(k.sisaDana)],['Serapan Keuangan',pct(k.serapan)],['Realisasi Fisik',pct(k.realisasiFisik)]];return <section><div className="section-title"><span>ANALITIK REALISASI</span><h2>Fisik & Keuangan</h2><p>Ringkasan indikator realisasi yang dibaca langsung dari sumber kinerja.</p></div><div className="metric-list">{rows.map(([a,b])=><button key={a} onClick={()=>onKpi({label:a,value:b,note:'Nilai dihitung dan dibaca dari sumber data pusat.'})}><span>{a}</span><strong>{b}</strong><em>↗</em></button>)}</div><div className="panel formula"><span>LOGIKA PERHITUNGAN</span><b>Serapan Keuangan = Realisasi Keuangan ÷ Anggaran × 100</b><b>Realisasi Fisik = nilai fisik resmi/tertimbang dari sumber</b><b>Sisa Dana = Anggaran − Realisasi Keuangan</b></div></section>}
+function Realisasi({k,onKpi,finance,onFinance}){
+ const rows=[{id:'budget',label:'Total Anggaran',value:money(k.totalAnggaran)},{id:'financial',label:'Realisasi Keuangan',value:money(k.realisasiKeuangan)},{id:'remaining',label:'Sisa Dana',value:money(k.sisaDana)},{id:'serapan',label:'Serapan Keuangan',value:pct(k.serapan)},{id:'physical',label:'Realisasi Fisik',value:pct(k.realisasiFisik)}];
+ return <section><div className="section-title"><span>ANALITIK REALISASI</span><h2>Fisik & Keuangan</h2><p>Klik salah satu indikator untuk melihat rincian program, kegiatan/subkegiatan, pagu, realisasi keuangan, realisasi fisik dan sisa dana.</p></div>
+  <div className="metric-list">{rows.map(item=><button key={item.id} type="button" onClick={()=>onKpi({id:item.id,label:item.label,value:item.value,note:'Bersumber dari Realisasi Fisik & Keu pada Web 1.'})}><span>{item.label}</span><strong>{item.value}</strong><em>↗</em></button>)}</div>
+  <FinancePreview finance={finance} onOpen={onFinance}/>
+  <div className="panel formula"><span>LOGIKA PERHITUNGAN</span><b>Serapan Keuangan = Realisasi Keuangan ÷ Anggaran × 100</b><b>Realisasi Fisik = nilai fisik resmi/tertimbang dari sumber</b><b>Sisa Dana = Anggaran − Realisasi Keuangan</b></div></section>;
+}
+
 function Kinerja({k,onKpi}){const items=[['Sasaran Strategis',k.capaian?.strategic],['Sasaran Program',k.capaian?.program],['Kegiatan Utama',k.capaian?.kegiatanUtama],['Kegiatan Penunjang',k.capaian?.kegiatanPenunjang],['Subkegiatan Utama',k.capaian?.subUtama],['Subkegiatan Penunjang',k.capaian?.subPenunjang],['Monev Renaksi IKU',k.capaian?.renaksi],['Monev Program',k.capaian?.monevProgram]];return <section><div className="section-title"><span>MONITORING</span><h2>Kinerja & Evaluasi</h2><p>Perbandingan capaian antar kelompok sumber dalam tampilan visual yang ringkas.</p></div><div className="performance-grid">{items.map(([n,v])=><button type="button" className="perf panel interactive-panel" key={n} onClick={()=>onKpi({id:'capaian',label:n,value:pct(v),progress:v,note:'Capaian dari tabel sumber kinerja sesuai Excel'})}><div><b>{n}</b><strong>{pct(v)}</strong></div><div className="track"><i style={{width:`${clamp(v)}%`}}/></div><small className="card-action-hint">Klik untuk melihat grafik ↗</small></button>)}</div></section>}
 function Penugasan({k,onKpi,pkpt,onPkpt}){return <section><div className="section-title"><span>PKPT</span><h2>Progress Penugasan</h2><p>Ringkasan status penugasan dan jumlah output pada tahun anggaran terpilih.</p></div><div className="pen-grid"><button type="button" className="big-num panel interactive-panel" onClick={()=>onKpi({id:'pkpt',label:'Total Penugasan',value:num(k.penugasan)})}><strong>{num(k.penugasan)}</strong><span>Total penugasan</span></button>{[['Selesai',k.selesai],['Berjalan',k.berjalan],['Belum',k.belum]].map(([n,v])=><button type="button" className="status panel interactive-panel" key={n} onClick={()=>onKpi({id:'pkpt',label:`Penugasan ${n}`,status:n==='Selesai'?'selesai':n==='Berjalan'?'berjalan':'belum',value:num(v),note:`${pct(ratio(v,k.penugasan))} dari seluruh penugasan`})}><small>{n}</small><strong>{num(v)}</strong><span>{pct(ratio(v,k.penugasan))} dari total</span></button>)}</div><PkptPreview pkpt={pkpt} onOpen={onPkpt}/><div className="panel output-grid">{[['OUTPUT UTAMA',k.outputUtama],['OUTPUT PENUNJANG',k.outputPenunjang],['TOTAL OUTPUT',outputTotal(k)]].map(([title,v])=><button type="button" className="drilldown-tile" key={title} onClick={()=>onKpi({id:'output',label:title,value:num(v),note:'Jumlah berasal dari rekap output pada sheet Monev'})}><small>{title}</small><strong>{num(v)}</strong></button>)}</div></section>}
 // All detail charts use ONLY values returned by the Google Sheets API.
