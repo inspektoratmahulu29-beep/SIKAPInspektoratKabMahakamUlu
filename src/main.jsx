@@ -1,6 +1,7 @@
 import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
+import PkptExplorer,{PkptPreview} from './PkptExplorer.jsx';
 
 const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
  ...Array.from({length:12},(_,i)=>({value:`month-${String(i+1).padStart(2,'0')}`,label:new Intl.DateTimeFormat('id-ID',{month:'long'}).format(new Date(2026,i,1))})),
@@ -21,7 +22,7 @@ function App(){
   const [loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8);
   const [year,setYear]=useState(initialYear),[period,setPeriod]=useState(initialPeriod);
   const [years,setYears]=useState([...new Set([2026,initialYear])].sort((a,b)=>b-a));
-  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0);
+  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[pulse,setPulse]=useState(0);
   const [lastSync,setLastSync]=useState(null),[lastAttempt,setLastAttempt]=useState(null),[syncState,setSyncState]=useState('connecting');
   const [attemptCount,setAttemptCount]=useState(0),[diagnostic,setDiagnostic]=useState(null),[checking,setChecking]=useState(false);
   // A snapshot from another year/period must never appear under the newly selected heading.
@@ -38,7 +39,7 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'23.0'});
+      const params=new URLSearchParams({year:String(year),period,v:'24.0'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
@@ -98,6 +99,11 @@ function App(){
   },[load,year,period]);
 
   const k=data?.kpi||{};
+  const closePkpt=useCallback(()=>setPkptExplorer(null),[]);
+  const openKpi=useCallback((detail)=>{
+    if(detail?.id==='pkpt')setPkptExplorer({status:detail.status||'all'});
+    else setActiveKpi(detail);
+  },[]);
   const cards=useMemo(()=>[
     {id:'budget',label:'Total Anggaran',value:money(k.totalAnggaran),note:'Pagu anggaran pada sumber realisasi fisik & keuangan',icon:'Rp',tone:'gold'},
     {id:'financial',label:'Realisasi Keuangan',value:money(k.realisasiKeuangan),note:'Akumulasi realisasi keuangan terhimpun',icon:'↗',tone:'teal'},
@@ -170,14 +176,15 @@ function App(){
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
           {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet utama)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
-          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={setActiveKpi}/>} 
+          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={setActiveKpi}/>} 
           {tab==='kinerja'&&<Kinerja k={k} onKpi={setActiveKpi}/>} 
-          {tab==='penugasan'&&<Penugasan k={k} onKpi={setActiveKpi}/>} 
+          {tab==='penugasan'&&<Penugasan k={k} onKpi={openKpi} pkpt={data?.pkpt} onPkpt={setPkptExplorer}/>} 
         </>}
         <footer>© {year} Inspektorat Daerah Kabupaten Mahakam Ulu • (SIKAP) Sistem Informasi Kinerja dan Pengawasan</footer>
       </main>
     </div>
+    {pkptExplorer&&<PkptExplorer pkpt={data?.pkpt} year={year} period={period} initial={pkptExplorer} onClose={closePkpt}/>}
     {activeKpi&&<KpiModal kpi={activeKpi} k={k} data={data} year={year} period={period} onClose={()=>setActiveKpi(null)}/>} 
   </div>
 }
@@ -246,7 +253,7 @@ function MetricIcon({id}){
   </svg>;
 }
 
-function Dashboard({cards,k,data,onKpi}){return <>
+function Dashboard({cards,k,data,onKpi,onPkpt}){return <>
   <div className="kpis">{cards.map(c=><button type="button" aria-label={`Lihat detail ${c.label}`} className={`kpi tone-${c.tone}`} key={c.id} onClick={()=>onKpi(c)}>
     <div className="kpi-head"><span className="kpi-icon"><MetricIcon id={c.id}/></span><span className="kpi-link">LIHAT GRAFIK <b>↗</b></span></div>
     <label>{c.label}</label><strong title={c.value}>{c.value}</strong><p>{c.note}</p>
@@ -273,13 +280,15 @@ function Dashboard({cards,k,data,onKpi}){return <>
       ].map(([n,v])=><button type="button" aria-label={`Detail capaian ${n}`} onClick={()=>onKpi({id:'capaian',label:`Capaian ${n}`,value:pct(v),progress:v,note:'Indikator kinerja dari sheet capaian terkait'})} className="profile-bar" key={n}><span style={{height:`${v==null?0:Math.max(7,clamp(v))}%`}}/><b>{n}</b><small>{pct(v)}</small></button>)}</div>
     </section>
 
-    <section role="button" tabIndex={0} aria-label="Detail penugasan PKPT" onClick={()=>onKpi({id:'pkpt',label:'Progress Penugasan PKPT',value:num(k.penugasan),note:'Selesai, berjalan, dan belum ditugaskan'})} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onKpi({id:'pkpt',label:'Progress Penugasan PKPT',value:num(k.penugasan)})}}} className="panel pkpt-panel interactive-panel">
+    <section role="button" tabIndex={0} aria-label="Detail penugasan PKPT" onClick={()=>onKpi({id:'pkpt',label:'Progress Penugasan PKPT',value:num(k.penugasan),note:'Sudah, sedang berjalan, dan belum berjalan sesuai master PKPT'})} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onKpi({id:'pkpt',label:'Progress Penugasan PKPT',value:num(k.penugasan)})}}} className="panel pkpt-panel interactive-panel">
       <div className="panel-title"><span>STATUS PKPT</span><b>Progress Penugasan</b><small>{num(k.penugasan)} total</small></div>
-      <div className="stack"><i style={{width:`${ratio(k.selesai,k.penugasan)||0}%`}}/><i style={{width:`${ratio(k.berjalan,k.penugasan)}%`}}/><i style={{width:`${ratio(k.belum,k.penugasan)}%`}}/></div>
-      <div className="legend"><span><i className="done"/>Selesai <b>{num(k.selesai)}</b></span><span><i className="running"/>Berjalan <b>{num(k.berjalan)}</b></span><span><i className="pending"/>Belum <b>{num(k.belum)}</b></span></div>
+      <div className="stack"><i style={{width:`${ratio(k.selesai,k.penugasan)||0}%`}}/><i style={{width:`${ratio(k.berjalan,k.penugasan)}%`}}/><i style={{width:`${ratio(k.belum,k.penugasan)}%`}}/>{Number(k.lainnya)>0&&<i style={{width:`${ratio(k.lainnya,k.penugasan)}%`,background:'#bdcbd7'}}/>}</div>
+      <div className="legend"><span><i className="done"/>Selesai <b>{num(k.selesai)}</b></span><span><i className="running"/>Berjalan <b>{num(k.berjalan)}</b></span><span><i className="pending"/>Belum <b>{num(k.belum)}</b></span>{Number(k.lainnya)>0&&<span><i style={{background:'#bdcbd7'}}/>Lainnya <b>{num(k.lainnya)}</b></span>}</div>
       <div className="output"><div><small>OUTPUT UTAMA</small><b>{num(k.outputUtama)}</b></div><div><small>OUTPUT PENUNJANG</small><b>{num(k.outputPenunjang)}</b></div></div>
     </section>
   </div>
+
+  <PkptPreview pkpt={data?.pkpt} onOpen={onPkpt}/>
 
   <section className="panel coverage">
     <div className="panel-title"><span>CAKUPAN KERTAS KERJA</span><b>Cakupan baris berisi per sumber (indikatif)</b><small>{pct(data?.overallCompleteness)} baris terisi</small></div>
@@ -298,7 +307,7 @@ function Dashboard({cards,k,data,onKpi}){return <>
 function ratio(a,b){return a==null||b==null?null:b?Math.max(0,Math.min(100,(Number(a||0)/Number(b||0))*100)):0}
 function Realisasi({k,onKpi}){const rows=[['Total Anggaran',money(k.totalAnggaran)],['Realisasi Keuangan',money(k.realisasiKeuangan)],['Sisa Dana',money(k.sisaDana)],['Serapan Keuangan',pct(k.serapan)],['Realisasi Fisik',pct(k.realisasiFisik)]];return <section><div className="section-title"><span>ANALITIK REALISASI</span><h2>Fisik & Keuangan</h2><p>Ringkasan indikator realisasi yang dibaca langsung dari sumber kinerja.</p></div><div className="metric-list">{rows.map(([a,b])=><button key={a} onClick={()=>onKpi({label:a,value:b,note:'Nilai dihitung dan dibaca dari sumber data pusat.'})}><span>{a}</span><strong>{b}</strong><em>↗</em></button>)}</div><div className="panel formula"><span>LOGIKA PERHITUNGAN</span><b>Serapan Keuangan = Realisasi Keuangan ÷ Anggaran × 100</b><b>Realisasi Fisik = nilai fisik resmi/tertimbang dari sumber</b><b>Sisa Dana = Anggaran − Realisasi Keuangan</b></div></section>}
 function Kinerja({k,onKpi}){const items=[['Sasaran Strategis',k.capaian?.strategic],['Sasaran Program',k.capaian?.program],['Kegiatan Utama',k.capaian?.kegiatanUtama],['Kegiatan Penunjang',k.capaian?.kegiatanPenunjang],['Subkegiatan Utama',k.capaian?.subUtama],['Subkegiatan Penunjang',k.capaian?.subPenunjang],['Monev Renaksi IKU',k.capaian?.renaksi],['Monev Program',k.capaian?.monevProgram]];return <section><div className="section-title"><span>MONITORING</span><h2>Kinerja & Evaluasi</h2><p>Perbandingan capaian antar kelompok sumber dalam tampilan visual yang ringkas.</p></div><div className="performance-grid">{items.map(([n,v])=><button type="button" className="perf panel interactive-panel" key={n} onClick={()=>onKpi({id:'capaian',label:n,value:pct(v),progress:v,note:'Capaian dari tabel sumber kinerja sesuai Excel'})}><div><b>{n}</b><strong>{pct(v)}</strong></div><div className="track"><i style={{width:`${clamp(v)}%`}}/></div><small className="card-action-hint">Klik untuk melihat grafik ↗</small></button>)}</div></section>}
-function Penugasan({k,onKpi}){return <section><div className="section-title"><span>PKPT</span><h2>Progress Penugasan</h2><p>Ringkasan status penugasan dan jumlah output pada tahun anggaran terpilih.</p></div><div className="pen-grid"><button type="button" className="big-num panel interactive-panel" onClick={()=>onKpi({id:'pkpt',label:'Total Penugasan',value:num(k.penugasan)})}><strong>{num(k.penugasan)}</strong><span>Total penugasan</span></button>{[['Selesai',k.selesai],['Berjalan',k.berjalan],['Belum',k.belum]].map(([n,v])=><button type="button" className="status panel interactive-panel" key={n} onClick={()=>onKpi({id:'pkpt',label:`Penugasan ${n}`,value:num(v),note:`${pct(ratio(v,k.penugasan))} dari seluruh penugasan`})}><small>{n}</small><strong>{num(v)}</strong><span>{pct(ratio(v,k.penugasan))} dari total</span></button>)}</div><div className="panel output-grid">{[['OUTPUT UTAMA',k.outputUtama],['OUTPUT PENUNJANG',k.outputPenunjang],['TOTAL OUTPUT',outputTotal(k)]].map(([title,v])=><button type="button" className="drilldown-tile" key={title} onClick={()=>onKpi({id:'output',label:title,value:num(v),note:'Jumlah berasal dari rekap output pada sheet Monev'})}><small>{title}</small><strong>{num(v)}</strong></button>)}</div></section>}
+function Penugasan({k,onKpi,pkpt,onPkpt}){return <section><div className="section-title"><span>PKPT</span><h2>Progress Penugasan</h2><p>Ringkasan status penugasan dan jumlah output pada tahun anggaran terpilih.</p></div><div className="pen-grid"><button type="button" className="big-num panel interactive-panel" onClick={()=>onKpi({id:'pkpt',label:'Total Penugasan',value:num(k.penugasan)})}><strong>{num(k.penugasan)}</strong><span>Total penugasan</span></button>{[['Selesai',k.selesai],['Berjalan',k.berjalan],['Belum',k.belum]].map(([n,v])=><button type="button" className="status panel interactive-panel" key={n} onClick={()=>onKpi({id:'pkpt',label:`Penugasan ${n}`,status:n==='Selesai'?'selesai':n==='Berjalan'?'berjalan':'belum',value:num(v),note:`${pct(ratio(v,k.penugasan))} dari seluruh penugasan`})}><small>{n}</small><strong>{num(v)}</strong><span>{pct(ratio(v,k.penugasan))} dari total</span></button>)}</div><PkptPreview pkpt={pkpt} onOpen={onPkpt}/><div className="panel output-grid">{[['OUTPUT UTAMA',k.outputUtama],['OUTPUT PENUNJANG',k.outputPenunjang],['TOTAL OUTPUT',outputTotal(k)]].map(([title,v])=><button type="button" className="drilldown-tile" key={title} onClick={()=>onKpi({id:'output',label:title,value:num(v),note:'Jumlah berasal dari rekap output pada sheet Monev'})}><small>{title}</small><strong>{num(v)}</strong></button>)}</div></section>}
 // All detail charts use ONLY values returned by the Google Sheets API.
 // Neither random bars nor invented monthly trends are rendered.
 function SvgProgressRing({value,caption='CAPAIAN'}){
