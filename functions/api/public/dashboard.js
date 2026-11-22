@@ -78,19 +78,30 @@ async function buildSnapshot(env, year, period='annual') {
   const emptySheets=resolved.filter(x=>!(byName[x.canonical]||[]).some(rowHasText)).map(x=>x.canonical);
   const metricSheets={};for(const x of resolved){const id=meta.sheets.find(s=>s.properties.title===x.title).properties.sheetId;metricSheets[x.canonical]={values:byName[x.canonical],schemaColumns:(meta.namedRanges||[]).filter(n=>n.name.startsWith(`KKCOL_${year}_${id}_`)).map(n=>({original:Number(n.name.split('_').at(-1)),current:n.range.startColumnIndex||0}))};}
   if(reportTitle){const p=meta.sheets.find(s=>s.properties.title===reportTitle).properties;metricSheets[report]={values:byName[report],schemaColumns:(meta.namedRanges||[]).filter(n=>n.name.startsWith(`KKCOL_${year}_${p.sheetId}_`)).map(n=>({original:Number(n.name.split('_').at(-1)),current:n.range.startColumnIndex||0}))};}
+  const formulaErrors=[];let formulaErrorCount=0;const invalidSourceSheets=new Set();
+  const errorToken=/^#(?:REF!|ERROR!|VALUE!|DIV\/0!|N\/A|NAME\?|NUM!|NULL!)(?:.*)?$/i;
+  for(const entry of sourceEntries){
+    const cells=byName[entry.canonical]||[];
+    for(let row=0;row<cells.length;row++)for(let col=0;col<(cells[row]||[]).length;col++){
+      const value=cells[row][col];
+      if(typeof value==='string'&&errorToken.test(value.trim())){
+        formulaErrorCount++;invalidSourceSheets.add(entry.canonical);if(formulaErrors.length<20)formulaErrors.push({sheet:entry.canonical,row:row+1,column:col+1,error:value.trim()});
+      }
+    }
+  }
   const kpi=calculateMetrics(metricSheets);
   // Dependent KPIs must be explicitly unknown when their source does not exist.
   const absent=new Set([...missing,...emptySheets]);
-  if(absent.has('Realisasi Fisik & Keu')) for(const field of ['totalAnggaran','realisasiKeuangan','realisasiFisik','serapan','sisaDana'])kpi[field]=null;
-  if(absent.has('Rekap realisasi PKPT'))for(const field of ['penugasan','selesai','berjalan','belum','lainnya'])kpi[field]=null;
-  if(absent.has('Monev output Subkegiatan Utama'))kpi.outputUtama=null;
-  if(absent.has('Monev Subkegiatan Penunjang'))kpi.outputPenunjang=null;
+  if(absent.has('Realisasi Fisik & Keu')||invalidSourceSheets.has('Realisasi Fisik & Keu')) for(const field of ['totalAnggaran','realisasiKeuangan','realisasiFisik','serapan','sisaDana'])kpi[field]=null;
+  if(absent.has('Rekap realisasi PKPT')||invalidSourceSheets.has('Rekap realisasi PKPT'))for(const field of ['penugasan','selesai','berjalan','belum','lainnya'])kpi[field]=null;
+  if(absent.has('Monev output Subkegiatan Utama')||invalidSourceSheets.has('Monev output Subkegiatan Utama'))kpi.outputUtama=null;
+  if(absent.has('Monev Subkegiatan Penunjang')||invalidSourceSheets.has('Monev Subkegiatan Penunjang'))kpi.outputPenunjang=null;
   const monevResmi=kpi.monevResmi||summarizeOfficialMonev(null);
   const sheets=SHEETS.map(c=>{if(absent.has(c))return {name:c,percent:null,rows:null,available:false,status:missing.includes(c)?'missing':'empty'};const rows=byName[c]||[];return {name:c,percent:completeness(rows),rows:rows.filter(rowHasText).length,available:true};});
   const available=sheets.filter(s=>s.available);
   const overall=available.length?percentAverage(available.map(s=>s.percent)):null;
   if(reportTitle)sheets.push({name:report,percent:monevResmi.activities?monevResmi.reportedRealizations/monevResmi.activities*100:0,rows:byName[report]?.length||0,measure:'Realisasi kegiatan terisi'});
-  return {partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:SHEETS.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'22.0-public-sync-resilience',kpi,sheets,overallCompleteness:overall,formulas:{
+  return {formulaHealth:{errorsFound:formulaErrorCount,examples:formulaErrors},partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:SHEETS.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'23.0-public-formula-health',kpi,sheets,overallCompleteness:overall,formulas:{
     totalAnggaran:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     realisasiKeuangan:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     serapan:'Realisasi Keuangan ÷ Anggaran × 100', realisasiFisik:'Nilai fisik resmi/tertimbang dari sumber',
@@ -112,14 +123,14 @@ export async function onRequestGet({request,env,context}){
   const sourceKey=Array.from(new Uint8Array(digest)).slice(0,8).map(v=>v.toString(16).padStart(2,'0')).join('');
   const forceRefresh=url.searchParams.get('refresh')==='1';
   const cache=globalThis.caches?.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=22.0`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=23.0`);
   const cached=cache&&!forceRefresh?await cache.match(key).catch(()=>null):null;
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
     out.headers.set('cache-control','no-store');
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=22.0`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=23.0`);
   const cacheId=`${sourceKey}:${year}:${period}`;
   let build=inflight.get(cacheId);
   if(!build){
@@ -135,7 +146,7 @@ export async function onRequestGet({request,env,context}){
   try{
     const {body,etag}=await build;
     const physicalKpiSource = (() => { try { return JSON.parse(body)?.kpi?.realisasiFisik != null ? (JSON.parse(body)?.kpi?.physicalSource || 'same-snapshot') : 'missing'; } catch { return 'unknown'; } })();
-    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource,'x-physical-kpi-rule':'E-primary-H-fallback-GC-recovery'}});
+    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource,'x-physical-kpi-rule':'official-E-value-only-no-estimation'}});
     if(cache){
       const backgroundCache=Promise.allSettled([
         cache.put(key,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=7'}})),
