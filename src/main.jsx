@@ -38,7 +38,7 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'22.0'});
+      const params=new URLSearchParams({year:String(year),period,v:'23.0'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
@@ -167,6 +167,7 @@ function App(){
 
         {loading&&!data?<LoadingScreen progress={loadProgress} year={year}/>:error&&!data?<ConnectionPanel error={error} code={errorCode} stage={errorStage} year={year} period={period} lastAttempt={lastAttempt} attemptCount={attemptCount} loading={loading} diagnostic={diagnostic} checking={checking} onRetry={()=>load(true)} onCheck={checkConnection}/>:<>
           {data&&syncState==='stale'&&<div className="sources-warning" role="status"><b>Data cadangan — sinkronisasi langsung sedang terganggu</b><p>Indikator di bawah berasal dari pembacaan Google Sheets terakhir yang berhasil. Waktu data: {data.updatedAt?new Date(data.updatedAt).toLocaleString('id-ID'):'tidak diketahui'}. Gunakan Muat ulang atau diagnostik untuk memeriksa koneksi terbaru.</p><div className="retry-actions"><button type="button" onClick={()=>load(true)}>Muat ulang sekarang</button><button type="button" onClick={checkConnection} disabled={checking}>{checking?'Memeriksa…':'Periksa koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
+          {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
           {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet utama)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
           {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={setActiveKpi}/>} 
