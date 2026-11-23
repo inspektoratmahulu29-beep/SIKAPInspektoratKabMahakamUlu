@@ -1,10 +1,14 @@
 /** Lightweight verification of the actual master workbook revision written by Web Kertas Kerja.
  * No synthetic time bucket: a revision changes only after a successful authenticated mutation.
  */
-import {sheetsMeta,batchGetSheets} from '../../lib/google.js';
+import {sheetsMeta,batchGetSheets,masterBridgeConfigured,masterRevision} from '../../lib/google.js';
 export async function onRequestGet({env}){
  const headers={'cache-control':'no-store, max-age=0','content-type':'application/json; charset=utf-8'};
  try{
+  if(masterBridgeConfigured(env)){
+    const data=await masterRevision(env);
+    return Response.json(data,{headers});
+  }
   const meta=await sheetsMeta(env);
   const exists=(meta.sheets||[]).some(s=>s.properties?.title==='_KK_SYNC');
   if(!exists)return Response.json({ok:true,markerAvailable:false,revision:null,reason:'MASTER_REVISION_NOT_INITIALIZED',fullRefreshFallbackMs:60000},{headers});

@@ -1,4 +1,4 @@
-import { getSheetTitles } from '../../lib/google.js';
+import { getSheetTitles, masterBridgeConfigured, masterBridgeIncomplete } from '../../lib/google.js';
 import {fingerprint} from './connection.js';
 const CANONICAL = [
   'IKU','Rencana Aksi','Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama',
@@ -9,7 +9,7 @@ const CANONICAL = [
 export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const refresh=url.searchParams.get('refresh')==='1';
-  const cache=globalThis.caches?.default;const sid=await fingerprint(env?.GOOGLE_SHEETS_SPREADSHEET_ID||'none');const key=new Request(`${url.origin}/__cache/public-years?v=21&sid=${sid}`);
+  const cache=globalThis.caches?.default;const sid=await fingerprint(masterBridgeConfigured(env)?`master:${env.KKK_MASTER_URL}`:env?.GOOGLE_SHEETS_SPREADSHEET_ID||'none');const key=new Request(`${url.origin}/__cache/public-years?v=21&sid=${sid}`);
   const cached=!refresh&&cache?await cache.match(key).catch(()=>null):null; if(cached) return new Response(cached.body,cached);
   try{
     const titles=await getSheetTitles(env);
@@ -22,7 +22,8 @@ export async function onRequestGet({request,env}){
     const response=Response.json({ok:true,years:[...years].sort((a,b)=>b-a)},{headers:{'cache-control':'public,max-age=5,s-maxage=15','x-years-cache':'MISS'}}); if(cache)await cache.put(key,response.clone()).catch(()=>{}); return response;
   }catch(e){
     const raw=String(e?.message||'');
-    const code=!env?.GOOGLE_SHEETS_SPREADSHEET_ID||!env?.GOOGLE_SERVICE_ACCOUNT_JSON?'GOOGLE_CONFIG_MISSING'
+    const code=masterBridgeIncomplete(env)?'MASTER_SYNC_CONFIG_INCOMPLETE':!masterBridgeConfigured(env)&&(!env?.GOOGLE_SHEETS_SPREADSHEET_ID||!env?.GOOGLE_SERVICE_ACCOUNT_JSON)?'GOOGLE_CONFIG_MISSING'
+      :e?.code?.startsWith('MASTER_')||e?.code==='SYNC_UNAUTHORIZED'?e.code
       :Number(e?.status)===403?'GOOGLE_ACCESS_DENIED'
       :Number(e?.status)===404?'SPREADSHEET_NOT_FOUND'
       :raw.includes('OAuth')?'GOOGLE_AUTH_FAILED'
