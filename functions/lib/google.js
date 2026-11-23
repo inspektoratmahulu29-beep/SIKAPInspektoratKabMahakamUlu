@@ -89,7 +89,7 @@ async function masterRead(env, operation, ranges=[]) {
   }
   // The configured origin is resolved server-side; no incoming request controls it.
   const endpoint=new URL('/api/sync/master',root.origin);
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),18500);
   try{
     const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-sikap-sync-key':env.SIKAP_SYNC_SECRET,'accept':'application/json'},body:JSON.stringify({operation,ranges}),signal:controller.signal});
     const result=await response.json().catch(()=>null);
@@ -142,15 +142,17 @@ export async function batchGetSheets(env,ranges){
   if(ranges.length<=16)return read(ranges);
   const groups=[];for(let i=0;i<ranges.length;i+=10)groups.push({offset:i,ranges:ranges.slice(i,i+10)});
   const valueRanges=Array(ranges.length).fill(null),failedRanges=[];
-  // Sequential groups avoid bursting quota limits for concurrent OPD readers;
-  // the edge cache and inflight request sharing further reduce upstream usage.
-  for(const group of groups){
-    try{
-      const response=await read(group.ranges);
+  // At most three simultaneous bounded-size batches for the 28-source
+  // workbook. This avoids a 3-request serial waterfall on every data update.
+  const results=await Promise.allSettled(groups.map(group=>read(group.ranges)));
+  const responses=groups.map((group,i)=>({group,result:results[i]}));
+  for(const {group,result} of responses){
+    if(result.status==='fulfilled'){
+      const response=result.value;
       for(let i=0;i<group.ranges.length;i++)valueRanges[group.offset+i]=response.valueRanges?.[i]||{range:group.ranges[i],values:[]};
-    }catch(error){
-      // Incorrect credentials / a wrong spreadsheet cannot be treated as an
-      // optional partial failure, otherwise the screen could show a false 0.
+    }else{
+      const error=result.reason;
+      // Wrong credentials must not be represented as valid blank values.
       if([401,403,404].includes(Number(error?.status))||/AUTH|DENIED|CREDENTIAL|NOT_FOUND|UNAUTHORIZED|CONFIG/i.test(String(error?.code||'')))throw error;
       failedRanges.push(...group.ranges.map((range,i)=>({index:group.offset+i,range,code:error?.code||'GOOGLE_READ_FAILED'})));
     }
