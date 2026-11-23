@@ -19,7 +19,7 @@ globalThis.fetch=async uri=>{
 const url='https://test.invalid/api/public/dashboard?year=2026&period=annual&refresh=1';
 let r=await getDashboard({request:new Request(url),env});assert.equal(r.status,200,'Google data must survive Cloudflare cache failure');
 const body=await r.json();assert.equal(body.partial,true,'All 14 Google sheet tabs can exist but be blank');assert.equal(body.emptySheets.length,14);assert.equal(body.sheets.length,28);assert.equal(body.kpi.penugasan,null);
-assert.equal(reads,1);
+assert.equal(reads,2,'14 source sheets are fetched in bounded groups of seven');
 r=await getConnection({env});assert.equal(r.status,200);const details=await r.json();assert.equal(details.code,'GOOGLE_READ_OK');assert.equal(details.coreSheetsFound,14);assert.ok(details.spreadsheetFingerprint);
 r=await getDashboard({request:new Request(url),env:{}});assert.equal(r.status,503);assert.equal((await r.json()).code,'GOOGLE_CONFIG_MISSING');
 titles=titles.slice(0,1);
