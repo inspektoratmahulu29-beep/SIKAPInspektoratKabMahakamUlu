@@ -8,7 +8,7 @@
     "build": "npm run check:backend && vite build",
     "preview": "vite preview",
     "check:backend": "node scripts/check-backend.mjs",
-    "test": "node tests/public-period.mjs && node tests/official-report.mjs && node tests/connection-reload.mjs && node tests/v22-resilience.mjs && node tests/import-formula-health.mjs && node tests/pkpt-details.mjs && node tests/financial-details.mjs && node tests/revision-marker.mjs && node tests/new-kpi-drilldown.mjs"
+    "test": "node tests/public-period.mjs && node tests/official-report.mjs && node tests/connection-reload.mjs && node tests/v22-resilience.mjs && node tests/import-formula-health.mjs && node tests/pkpt-details.mjs && node tests/financial-details.mjs && node tests/revision-marker.mjs && node tests/new-kpi-drilldown.mjs && node tests/master-bridge-failover.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.3",
