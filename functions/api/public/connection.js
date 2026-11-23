@@ -1,5 +1,6 @@
 import {sheetsMeta,batchGetSheets,quoteSheet} from '../../lib/google.js';
 const CORE=['IKU','Rencana Aksi','Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)','Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama','Monev Subkegiatan Penunjang','Rekap realisasi PKPT','Realisasi Fisik & Keu'];
+const EXTRA=['Rekap NON PKPT 2026','ST Belum Klasifikasi','Rekonsiliasi DPPA 2026','Validasi Data 2026','Dasar Indikator DPA 2026','Jadwal PKPT dan Bukti 2026','Register Bukti Capaian 2026','Audit Isian 12 Sheet 2026','Capaian Detail Penunjang 2026','ST Perlu Pemetaan Okt 2026','Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','TOTAL REKAP PKPT NON 2026'];
 export async function fingerprint(value){
   if(!value)return null;
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(value).trim()));
@@ -18,9 +19,11 @@ export async function onRequestGet({env,request}){
   try{
     const meta=await sheetsMeta(env),titles=new Set((meta.sheets||[]).map(s=>s.properties.title));
     const found=CORE.filter(n=>titles.has(`${year}__${n}`)||(year===2026&&titles.has(n)));
+    const required=[...CORE,`Laporan_Monev_Renaksi_${year}`,...EXTRA];
+    const present=required.filter(n=>titles.has(`${year}__${n}`)||(year===2026&&titles.has(n)));
     // Validate the values endpoint too: metadata alone is not proof that KPI cells can be fetched.
     if(found.length){const first=found[0];const title=titles.has(`${year}__${first}`)?`${year}__${first}`:first;await batchGetSheets(env,[`${quoteSheet(title)}!A1:A1`]);}
-    return Response.json({ok:true,code:found.length===14?'GOOGLE_READ_OK':'GOOGLE_READ_PARTIAL',...info,sheetCount:meta.sheets?.length||0,coreSheetsFound:found.length,coreSheetsExpected:14,missingCore:CORE.filter(n=>!found.includes(n)),officialMonevPresent:titles.has(`${year}__Laporan_Monev_Renaksi_${year}`)||(year===2026&&titles.has('Laporan_Monev_Renaksi_2026')),message:found.length===14?'Koneksi berhasil; 14 sumber inti ditemukan.':'Google Sheets dapat dibaca, tetapi beberapa sumber KPI belum tersedia.'},{headers});
+    return Response.json({ok:true,code:found.length===14?'GOOGLE_READ_OK':'GOOGLE_READ_PARTIAL',...info,sheetCount:meta.sheets?.length||0,coreSheetsFound:found.length,coreSheetsExpected:14,missingCore:CORE.filter(n=>!found.includes(n)),totalSourcesFound:present.length,totalSourcesExpected:required.length,missingSources:required.filter(n=>!present.includes(n)),revisionMarkerPresent:titles.has('_KK_SYNC'),officialMonevPresent:titles.has(`${year}__Laporan_Monev_Renaksi_${year}`)||(year===2026&&titles.has('Laporan_Monev_Renaksi_2026')),message:found.length===14?'Koneksi berhasil; 14 sumber inti ditemukan.':'Google Sheets dapat dibaca, tetapi beberapa sumber KPI belum tersedia.'},{headers});
   }catch(error){
     const msg=String(error?.message||'');const status=Number(error?.status||0);const code=status===403?'GOOGLE_ACCESS_DENIED':status===404?'SPREADSHEET_NOT_FOUND':status===429?'GOOGLE_RATE_LIMITED':status===504||msg.toLowerCase().includes('timeout')?'GOOGLE_TIMEOUT':msg.includes('Google OAuth')?'GOOGLE_AUTH_FAILED':'GOOGLE_SHEETS_UNAVAILABLE';
     console.error(JSON.stringify({event:'dashboard_connection_failed',code,googleStatus:Number(error?.status||0)}));
