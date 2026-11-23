@@ -73,18 +73,57 @@ async function fetchJson(url, options = {}) {
   throw last || new Error('Google Sheets unavailable');
 }
 
-export async function sheetsMeta(env) {
+/** Optional server-to-server master connection. Use this if SIKAP has no working
+ * Google credentials. The URL and secret are Cloudflare server variables, NEVER
+ * Vite VITE_* variables or frontend code. */
+export const masterBridgeConfigured = env => Boolean(String(env?.KKK_MASTER_URL||'').trim() && String(env?.SIKAP_SYNC_SECRET||'').length >= 32);
+export const masterBridgeIncomplete = env => Boolean(env?.KKK_MASTER_URL || env?.SIKAP_SYNC_SECRET) && !masterBridgeConfigured(env);
+export const masterSourceMode = env => masterBridgeConfigured(env) ? 'kertas-kerja-master' : 'google-sheets';
+
+async function masterRead(env, operation, ranges=[]) {
+  let root;
+  try {root=new URL(String(env.KKK_MASTER_URL||'').trim());}
+  catch {const e=new Error('MASTER_SYNC_URL_INVALID');e.code='MASTER_SYNC_URL_INVALID';throw e;}
+  if(root.protocol!=='https:' || !root.hostname || root.username || root.password){
+    const e=new Error('MASTER_SYNC_URL_INVALID');e.code='MASTER_SYNC_URL_INVALID';throw e;
+  }
+  // The configured origin is resolved server-side; no incoming request controls it.
+  const endpoint=new URL('/api/sync/master',root.origin);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+  try{
+    const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-sikap-sync-key':env.SIKAP_SYNC_SECRET,'accept':'application/json'},body:JSON.stringify({operation,ranges}),signal:controller.signal});
+    const result=await response.json().catch(()=>null);
+    if(!response.ok||!result?.ok){
+      const error=new Error(result?.code||'MASTER_SYNC_UNAVAILABLE');
+      error.code=result?.code||'MASTER_SYNC_UNAVAILABLE';error.status=response.status;throw error;
+    }
+    return operation==='metadata'?result.meta:operation==='revision'?result:result.data;
+  }catch(error){
+    if(error.name==='AbortError'){const e=new Error('MASTER_SYNC_TIMEOUT');e.code='MASTER_SYNC_TIMEOUT';e.status=504;throw e;}
+    if(!error.code){error.code='MASTER_SYNC_UNAVAILABLE';error.status=error.status||503;}
+    throw error;
+  }finally{clearTimeout(timer);}
+}
+async function directMeta(env) {
   if (!env.GOOGLE_SHEETS_SPREADSHEET_ID) throw new Error('GOOGLE_SHEETS_SPREADSHEET_ID belum diatur');
   const token = await getGoogleAccessToken(env.GOOGLE_SERVICE_ACCOUNT_JSON);
   return fetchJson(`${SHEETS_API}/${encodeURIComponent(env.GOOGLE_SHEETS_SPREADSHEET_ID)}?fields=spreadsheetId,namedRanges,sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)))`, {
     headers:{Authorization:`Bearer ${token}`}
   });
 }
+export async function masterRevision(env){
+  if(!masterBridgeConfigured(env))throw Object.assign(new Error('MASTER_SYNC_CONFIG_INCOMPLETE'),{code:'MASTER_SYNC_CONFIG_INCOMPLETE'});
+  return masterRead(env,'revision');
+}
+export async function sheetsMeta(env) {
+  if(masterBridgeIncomplete(env)) {const e=new Error('MASTER_SYNC_CONFIG_INCOMPLETE');e.code='MASTER_SYNC_CONFIG_INCOMPLETE';throw e;}
+  return masterBridgeConfigured(env)?masterRead(env,'metadata'):directMeta(env);
+}
 export async function getSheetTitles(env) {
   const meta = await sheetsMeta(env);
   return (meta.sheets || []).map(s=>s.properties.title);
 }
-export async function batchGetSheets(env, ranges) {
+async function directValues(env,ranges) {
   if (!env.GOOGLE_SHEETS_SPREADSHEET_ID) throw new Error('GOOGLE_SHEETS_SPREADSHEET_ID belum diatur');
   const token = await getGoogleAccessToken(env.GOOGLE_SERVICE_ACCOUNT_JSON);
   const url = new URL(`${SHEETS_API}/${encodeURIComponent(env.GOOGLE_SHEETS_SPREADSHEET_ID)}/values:batchGet`);
@@ -92,6 +131,34 @@ export async function batchGetSheets(env, ranges) {
   url.searchParams.set('majorDimension','ROWS');
   url.searchParams.set('valueRenderOption','UNFORMATTED_VALUE');
   return fetchJson(url, {headers:{Authorization:`Bearer ${token}`}});
+}
+/** Keep small reads atomic. Split 28-sheet snapshots into modest groups so that
+ * one oversized/transient Google result does not blank every working KPI.
+ * Partial results retain exact input indices; callers must mark failed sources.
+ */
+export async function batchGetSheets(env,ranges){
+  if(!Array.isArray(ranges)||!ranges.length)return {valueRanges:[],failedRanges:[]};
+  const read=chunk=>masterBridgeConfigured(env)?masterRead(env,'values',chunk):directValues(env,chunk);
+  if(ranges.length<=16)return read(ranges);
+  const groups=[];for(let i=0;i<ranges.length;i+=10)groups.push({offset:i,ranges:ranges.slice(i,i+10)});
+  const valueRanges=Array(ranges.length).fill(null),failedRanges=[];
+  // Sequential groups avoid bursting quota limits for concurrent OPD readers;
+  // the edge cache and inflight request sharing further reduce upstream usage.
+  for(const group of groups){
+    try{
+      const response=await read(group.ranges);
+      for(let i=0;i<group.ranges.length;i++)valueRanges[group.offset+i]=response.valueRanges?.[i]||{range:group.ranges[i],values:[]};
+    }catch(error){
+      // Incorrect credentials / a wrong spreadsheet cannot be treated as an
+      // optional partial failure, otherwise the screen could show a false 0.
+      if([401,403,404].includes(Number(error?.status))||/AUTH|DENIED|CREDENTIAL|NOT_FOUND|UNAUTHORIZED|CONFIG/i.test(String(error?.code||'')))throw error;
+      failedRanges.push(...group.ranges.map((range,i)=>({index:group.offset+i,range,code:error?.code||'GOOGLE_READ_FAILED'})));
+    }
+  }
+  if(failedRanges.length===ranges.length){
+    const err=new Error('Semua kelompok sumber gagal dibaca');err.code='GOOGLE_SHEETS_UNAVAILABLE';err.stage='values';throw err;
+  }
+  return {valueRanges,failedRanges};
 }
 export function quoteSheet(name) { return `'${String(name).replace(/'/g,"''")}'`; }
 export async function batchGetExisting(env, rangesByName) {
