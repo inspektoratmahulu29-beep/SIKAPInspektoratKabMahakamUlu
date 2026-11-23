@@ -25,7 +25,7 @@ const EXTRA_SHEETS = [
   'Validasi Data 2026','Dasar Indikator DPA 2026','Jadwal PKPT dan Bukti 2026',
   'Register Bukti Capaian 2026','Audit Isian 12 Sheet 2026',
   'Capaian Detail Penunjang 2026','ST Perlu Pemetaan Okt 2026',
-  'Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','TOTAL REKAP PKPT NON 2026'
+  'Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','PKPT 76 Penugasan 2026','TOTAL REKAP PKPT NON 2026'
 ];
 const num = v => {
   if (typeof v === 'number' && Number.isFinite(v)) return v;

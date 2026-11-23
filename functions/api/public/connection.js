@@ -1,6 +1,6 @@
 import {sheetsMeta,batchGetSheets,quoteSheet} from '../../lib/google.js';
 const CORE=['IKU','Rencana Aksi','Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)','Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama','Monev Subkegiatan Penunjang','Rekap realisasi PKPT','Realisasi Fisik & Keu'];
-const EXTRA=['Rekap NON PKPT 2026','ST Belum Klasifikasi','Rekonsiliasi DPPA 2026','Validasi Data 2026','Dasar Indikator DPA 2026','Jadwal PKPT dan Bukti 2026','Register Bukti Capaian 2026','Audit Isian 12 Sheet 2026','Capaian Detail Penunjang 2026','ST Perlu Pemetaan Okt 2026','Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','TOTAL REKAP PKPT NON 2026'];
+const EXTRA=['Rekap NON PKPT 2026','ST Belum Klasifikasi','Rekonsiliasi DPPA 2026','Validasi Data 2026','Dasar Indikator DPA 2026','Jadwal PKPT dan Bukti 2026','Register Bukti Capaian 2026','Audit Isian 12 Sheet 2026','Capaian Detail Penunjang 2026','ST Perlu Pemetaan Okt 2026','Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','PKPT 76 Penugasan 2026','TOTAL REKAP PKPT NON 2026'];
 export async function fingerprint(value){
   if(!value)return null;
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(value).trim()));
