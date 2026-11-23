@@ -292,7 +292,7 @@ function Dashboard({cards,k,data,onKpi,onPkpt,onFinance,onInsight,revisionInfo,o
     <label>{c.label}</label><strong title={c.value}>{c.value}</strong><p>{c.note}</p>
     {typeof c.progress==='number'?<div className="mini-progress"><i style={{width:`${c.progress}%`}}/></div>:<div className="kpi-decor-svg"><svg viewBox="0 0 140 24" aria-hidden="true"><path d="M2 19 Q18 14 30 16 T58 11 T86 14 T112 7 T138 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="138" cy="8" r="3" fill="currentColor"/></svg></div>}
   </button>)}</div>
-  <section className="mi-sync-panel"><div><b>STATUS SUMBER MASTER</b><small>{revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} · ${revisionInfo.updatedAt||'Waktu tidak diketahui'}`:'Revisi tidak tersedia; gunakan pemeriksaan sumber'}</small></div><button type="button" disabled={checking} onClick={onCheck}>{checking?'Memeriksa…':'Diagnostik 28 sheet'}</button>{diagnostic&&<DiagnosticDetails diagnostic={diagnostic}/>}</section>
+  <section className="mi-sync-panel"><div><b>STATUS SUMBER MASTER</b><small>{revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} · ${revisionInfo.updatedAt||'Waktu tidak diketahui'}`:'Revisi tidak tersedia; gunakan pemeriksaan sumber'}</small></div><button type="button" disabled={checking} onClick={onCheck}>{checking?'Memeriksa…':'Diagnostik sumber'}</button>{diagnostic&&<DiagnosticDetails diagnostic={diagnostic}/>}</section>
   <MasterInsights data={data?.integrated} pkptExecution={k?.penugasan} onOpen={section=>section==='pelaksanaan'?onPkpt({status:'all'}):onInsight(section)} revisionInfo={revisionInfo}/>
   <FinancePreview finance={data?.financialDetails} onOpen={onFinance}/>
 
