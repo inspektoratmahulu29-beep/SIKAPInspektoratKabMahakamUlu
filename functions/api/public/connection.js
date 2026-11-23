@@ -9,11 +9,16 @@ export async function fingerprint(value){
 export async function onRequestGet({env,request}){
   const url=new URL(request?.url||'https://example.com');
   const year=Number(url.searchParams.get('year')||2026);
+  const period=String(url.searchParams.get('period')||'annual');
+  if(!Number.isInteger(year)||year<2000||year>2100 || !/^(?:annual|month-(?:0[1-9]|1[0-2])|quarter-[1-4]|semester-[12])$/.test(period))
+    return Response.json({ok:false,code:'INVALID_PERIOD',message:'Tahun atau periode tidak valid.'},{status:400,headers:{'cache-control':'no-store'}});
+  const periodPrefix=period==='annual'?`${year}__`:`${year}__${period.startsWith('month-')?`M${period.slice(-2)}`:period.startsWith('quarter-')?`Q${period.slice(-1)}`:`S${period.slice(-1)}`}__`;
+  const exists=(titles,name)=>titles.has(`${periodPrefix}${name}`)||(period==='annual'&&year===2026&&titles.has(name));
   const id=String(env?.GOOGLE_SHEETS_SPREADSHEET_ID||'').trim(),raw=env?.GOOGLE_SERVICE_ACCOUNT_JSON;
   let email=null,validKey=false;
   try{const obj=typeof raw==='string'?JSON.parse(raw):raw;email=obj?.client_email||null;validKey=Boolean(obj?.private_key&&email);}catch{}
   const bridge=masterBridgeConfigured(env);
-  const info={spreadsheetFingerprint:await fingerprint(id),serviceAccountFingerprint:await fingerprint(email),googleConfigPresent:Boolean((id&&raw)||bridge),credentialStructureValid:bridge||validKey,sourceMode:masterSourceMode(env),bridgeConfigured:bridge,year};
+  const info={spreadsheetFingerprint:await fingerprint(id),serviceAccountFingerprint:await fingerprint(email),googleConfigPresent:Boolean((id&&raw)||bridge),credentialStructureValid:bridge||validKey,sourceMode:masterSourceMode(env),bridgeConfigured:bridge,year,period};
   if(masterBridgeIncomplete(env))return Response.json({ok:false,code:'MASTER_SYNC_CONFIG_INCOMPLETE',message:'Isi KKK_MASTER_URL dan SIKAP_SYNC_SECRET pada Secrets SIKAP. Isi SIKAP_SYNC_SECRET yang sama pada proyek Kertas Kerja.',...info},{status:503,headers});
   const headers={'cache-control':'no-store'};
   if(!bridge&&(!id||!raw))return Response.json({ok:false,code:'GOOGLE_CONFIG_MISSING',message:'Lengkapi GOOGLE_SHEETS_SPREADSHEET_ID dan GOOGLE_SERVICE_ACCOUNT_JSON pada proyek Dashboard Production.',...info},{status:503,headers});
@@ -21,12 +26,12 @@ export async function onRequestGet({env,request}){
   try{
     const meta=await sheetsMeta(env),titles=new Set((meta.sheets||[]).map(s=>s.properties.title));
     info.spreadsheetFingerprint=await fingerprint(meta.spreadsheetId||id);
-    const found=CORE.filter(n=>titles.has(`${year}__${n}`)||(year===2026&&titles.has(n)));
+    const found=CORE.filter(n=>exists(titles,n));
     const required=[...CORE,`Laporan_Monev_Renaksi_${year}`,...EXTRA];
-    const present=required.filter(n=>titles.has(`${year}__${n}`)||(year===2026&&titles.has(n)));
+    const present=required.filter(n=>exists(titles,n));
     // Validate the values endpoint too: metadata alone is not proof that KPI cells can be fetched.
-    if(found.length){const first=found[0];const title=titles.has(`${year}__${first}`)?`${year}__${first}`:first;await batchGetSheets(env,[`${quoteSheet(title)}!A1:A1`]);}
-    return Response.json({ok:true,code:found.length===14?'GOOGLE_READ_OK':'GOOGLE_READ_PARTIAL',...info,sheetCount:meta.sheets?.length||0,coreSheetsFound:found.length,coreSheetsExpected:14,missingCore:CORE.filter(n=>!found.includes(n)),totalSourcesFound:present.length,totalSourcesExpected:required.length,missingSources:required.filter(n=>!present.includes(n)),revisionMarkerPresent:titles.has('_KK_SYNC'),officialMonevPresent:titles.has(`${year}__Laporan_Monev_Renaksi_${year}`)||(year===2026&&titles.has('Laporan_Monev_Renaksi_2026')),message:found.length===14?`Koneksi ${bridge?'melalui Kertas Kerja master':'Google Sheets'} berhasil; 14 sumber inti ditemukan.`:'Koneksi berhasil, tetapi beberapa sumber KPI belum tersedia.'},{headers});
+    if(found.length){const first=found[0];const title=titles.has(`${periodPrefix}${first}`)?`${periodPrefix}${first}`:first;await batchGetSheets(env,[`${quoteSheet(title)}!A1:A1`]);}
+    return Response.json({ok:true,code:found.length===14?'GOOGLE_READ_OK':'GOOGLE_READ_PARTIAL',...info,sheetCount:meta.sheets?.length||0,coreSheetsFound:found.length,coreSheetsExpected:14,missingCore:CORE.filter(n=>!found.includes(n)),totalSourcesFound:present.length,totalSourcesExpected:required.length,missingSources:required.filter(n=>!present.includes(n)),revisionMarkerPresent:titles.has('_KK_SYNC'),officialMonevPresent:exists(titles,`Laporan_Monev_Renaksi_${year}`),message:found.length===14?`Koneksi ${bridge?'melalui Kertas Kerja master':'Google Sheets'} berhasil; 14 sumber inti ditemukan.`:'Koneksi berhasil, tetapi beberapa sumber KPI belum tersedia.'},{headers});
   }catch(error){
     const msg=String(error?.message||'');const status=Number(error?.status||0);const code=error?.code?.startsWith('MASTER_')||error?.code==='SYNC_UNAUTHORIZED'?error.code:status===403?'GOOGLE_ACCESS_DENIED':status===404?'SPREADSHEET_NOT_FOUND':status===429?'GOOGLE_RATE_LIMITED':status===504||msg.toLowerCase().includes('timeout')?'GOOGLE_TIMEOUT':msg.includes('Google OAuth')?'GOOGLE_AUTH_FAILED':'GOOGLE_SHEETS_UNAVAILABLE';
     console.error(JSON.stringify({event:'dashboard_connection_failed',code,googleStatus:Number(error?.status||0)}));

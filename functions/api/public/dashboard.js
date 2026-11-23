@@ -174,14 +174,14 @@ export async function onRequestGet({request,env,context}){
   const sourceKey=Array.from(new Uint8Array(digest)).slice(0,8).map(v=>v.toString(16).padStart(2,'0')).join('');
   const forceRefresh=url.searchParams.get('refresh')==='1';
   const cache=globalThis.caches?.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=26.1`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=27.0`);
   const cached=cache&&!forceRefresh?await cache.match(key).catch(()=>null):null;
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
     out.headers.set('cache-control','no-store');
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=26.1`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=27.0`);
   const cacheId=`${sourceKey}:${year}:${period}`;
   let build=inflight.get(cacheId);
   if(!build){
@@ -200,7 +200,7 @@ export async function onRequestGet({request,env,context}){
     const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource,'x-physical-kpi-rule':'official-E-value-only-no-estimation'}});
     if(cache){
       const backgroundCache=Promise.allSettled([
-        cache.put(key,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=7'}})),
+        cache.put(key,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=4'}})),
         cache.put(staleKey,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=90'}}))
       ]);
       // Request work stays independent of optional Cloudflare edge-cache writes.
