@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+import {onRequestGet} from '../functions/api/public/revision.js';
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
+const keys=await webcrypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+const pk=Buffer.from(await webcrypto.subtle.exportKey('pkcs8',keys.privateKey)).toString('base64');
+const env={GOOGLE_SHEETS_SPREADSHEET_ID:'test-revision-dashboard',GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:'rev-read@example.invalid',private_key:`-----BEGIN PRIVATE KEY-----\n${pk}\n-----END PRIVATE KEY-----`})};
+let hasMarker=false,failRead=false,revision='rev-a';
+globalThis.fetch=async(uri)=>{
+ const url=String(uri);
+ if(url.includes('oauth2'))return Response.json({access_token:'sample-token',expires_in:3600});
+ if(failRead)return Response.json({error:{message:'Google read unavailable'}},{status:503});
+ if(url.includes('values:batchGet'))return Response.json({valueRanges:[{values:[['revision','updatedAt','year','period','action','count'],[revision,'2026-11-23T08:00:00.000Z',2026,'annual','import',28]]}]});
+ return Response.json({sheets:[{properties:{title:'IKU'}},...(hasMarker?[{properties:{title:'_KK_SYNC'}}]:[])]});
+};
+let r=await onRequestGet({env});assert.equal(r.status,200);let d=await r.json();assert.equal(d.markerAvailable,false);assert.equal(d.reason,'MASTER_REVISION_NOT_INITIALIZED');
+hasMarker=true;r=await onRequestGet({env});assert.equal(r.status,200);d=await r.json();assert.equal(d.markerAvailable,true);assert.equal(d.revision,'rev-a');assert.equal(d.count,28);
+revision='rev-b';r=await onRequestGet({env});assert.equal((await r.json()).revision,'rev-b');
+failRead=true;r=await onRequestGet({env});assert.equal(r.status,503);d=await r.json();assert.equal(d.code,'REVISION_READ_FAILED');
+console.log('PASS: dashboard revision endpoint reads shared actual marker, reports missing marker and read failures, never manufactures revisions.');
