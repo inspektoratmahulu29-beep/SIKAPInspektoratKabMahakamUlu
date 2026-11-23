@@ -4,6 +4,7 @@ import './styles.css';
 import PkptExplorer,{PkptPreview} from './PkptExplorer.jsx';
 import FinanceExplorer,{FinancePreview} from './FinanceExplorer.jsx';
 import IntegratedExplorer from './IntegratedExplorer.jsx';
+import MasterInsights from './MasterInsights.jsx';
 
 const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
  ...Array.from({length:12},(_,i)=>({value:`month-${String(i+1).padStart(2,'0')}`,label:new Intl.DateTimeFormat('id-ID',{month:'long'}).format(new Date(2026,i,1))})),
@@ -24,8 +25,10 @@ function App(){
   const [loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8);
   const [year,setYear]=useState(initialYear),[period,setPeriod]=useState(initialPeriod);
   const [years,setYears]=useState([...new Set([2026,initialYear])].sort((a,b)=>b-a));
-  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[financeExplorer,setFinanceExplorer]=useState(null),[pulse,setPulse]=useState(0);
+  const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[financeExplorer,setFinanceExplorer]=useState(null),[insight,setInsight]=useState(null),[pulse,setPulse]=useState(0);
   const [lastSync,setLastSync]=useState(null),[lastAttempt,setLastAttempt]=useState(null),[syncState,setSyncState]=useState('connecting');
+  const [revisionInfo,setRevisionInfo]=useState(null);
+  const revisionRef=useRef(null),lastFullRef=useRef(0),revisionBusyRef=useRef(false);
   const [attemptCount,setAttemptCount]=useState(0),[diagnostic,setDiagnostic]=useState(null),[checking,setChecking]=useState(false);
   // A snapshot from another year/period must never appear under the newly selected heading.
   const data=snapshot?.year===year&&(snapshot?.period||'annual')===period?snapshot:null;
@@ -48,7 +51,7 @@ function App(){
       if(!r.ok||r.status===304){const exception=new Error(j.error||j.message||`Server mengembalikan HTTP ${r.status}`);exception.code=j.code||(r.status===304?'EMPTY_CACHE':`HTTP_${r.status}`);exception.stage=j.stage||'';throw exception;}
       if(!j||typeof j!=='object'||!j.kpi||j.year!==year||(j.period||'annual')!==period){const exception=new Error('Respons server tidak sesuai tahun, periode, atau format data yang dipilih.');exception.code='SOURCE_MISMATCH';throw exception;}
       if(requestRef.current!==controller)return;
-      setLoadProgress(100);setSnapshot(j);setError('');setErrorCode('');setLastSync(r.headers.get('x-dashboard-cache')==='STALE'&&j.updatedAt?new Date(j.updatedAt):new Date());
+      lastFullRef.current=Date.now();setLoadProgress(100);setSnapshot(j);setError('');setErrorCode('');setLastSync(r.headers.get('x-dashboard-cache')==='STALE'&&j.updatedAt?new Date(j.updatedAt):new Date());
       const state=r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live';setSyncState(state);
       retryRef.current={failures:0,nextAt:Date.now()+(state==='stale'?12000:7000)};
     }catch(e){
@@ -71,7 +74,7 @@ function App(){
     try{
       const r=await fetch(`/api/public/connection?year=${year}`,{cache:'no-store',signal:controller.signal});
       const j=await r.json();
-      setDiagnostic({ok:!!j.ok,code:j.code||`HTTP_${r.status}`,message:j.message||'Pemeriksaan koneksi selesai.',present:j.googleConfigPresent,valid:j.credentialStructureValid,found:j.coreSheetsFound,expected:j.coreSheetsExpected,missing:j.missingCore||[],fingerprint:j.spreadsheetFingerprint});
+      setDiagnostic({ok:!!j.ok,code:j.code||`HTTP_${r.status}`,message:j.message||'Pemeriksaan koneksi selesai.',present:j.googleConfigPresent,valid:j.credentialStructureValid,found:j.coreSheetsFound,expected:j.coreSheetsExpected,missing:j.missingCore||[],foundTotal:j.totalSourcesFound,expectedTotal:j.totalSourcesExpected,missingSources:j.missingSources||[],markerPresent:j.revisionMarkerPresent,fingerprint:j.spreadsheetFingerprint});
     }catch(e){setDiagnostic({ok:false,code:e.name==='AbortError'?'DIAGNOSTIC_TIMEOUT':'NETWORK_ERROR',message:'Pemeriksaan sumber tidak dapat diselesaikan. Periksa koneksi jaringan atau log Pages Functions.'});}
     finally{clearTimeout(timer);setChecking(false);}
   },[year]);
@@ -90,8 +93,28 @@ function App(){
   useEffect(()=>{
     retryRef.current={failures:0,nextAt:0};setLoading(true);setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setLoadProgress(12);
     load(false);
-    const tick=()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false)load(false);};
-    const poll=setInterval(tick,2500);
+    // Check a real revision written by Web Kertas Kerja. Do not poll a heavy 28-sheet snapshot every 2.5s.
+    // If the marker does not yet exist or cannot be read, a 60s full-refresh fallback still works.
+    const checkRevision=async()=>{
+      if(document.visibilityState!=='visible'||navigator.onLine===false||revisionBusyRef.current)return;
+      revisionBusyRef.current=true;
+      try{
+        const r=await fetch('/api/public/revision',{cache:'no-store'});
+        if(!r.ok)throw new Error('REVISION_UNAVAILABLE');
+        const j=await r.json();setRevisionInfo(j);
+        const next=j.markerAvailable&&j.revision?String(j.revision):null;
+        if(next && revisionRef.current!==next){
+          if(revisionRef.current!==null)load(true);
+          else if(Date.now()-lastFullRef.current>15000)load(true);
+          revisionRef.current=next;
+        }else if(Date.now()-lastFullRef.current>=60000)load(true);
+      }catch{
+        setRevisionInfo({ok:false,markerAvailable:false,reason:'REVISION_READ_FAILED'});
+        if(Date.now()-lastFullRef.current>=60000)load(true);
+      }finally{revisionBusyRef.current=false;}
+    };
+    checkRevision();
+    const poll=setInterval(checkRevision,18000);
     const anim=setInterval(()=>setPulse(v=>v+1),1800);
     const onVisible=()=>{if(document.visibilityState==='visible')load(false);};
     const onOnline=()=>load(true);
@@ -135,7 +158,7 @@ function App(){
         </div>
       </div>
       <div className="top-actions">
-        <div className={`realtime status-${syncState}`} role="status"><span className="live-dot"/> {syncState==='live'?'DATA TERBARU':syncState==='stale'?'DATA CADANGAN':syncState==='offline'?'KONEKSI TERPUTUS':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <div className={`realtime status-${syncState}`} role="status" title={revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} • ${revisionInfo.updatedAt}`:'Penanda revisi master belum terverifikasi; refresh cadangan tiap 60 detik'}><span className="live-dot"/> {syncState==='live'?(revisionInfo?.markerAvailable?'TERHUBUNG KE MASTER':'DATA TERBACA'):syncState==='stale'?'DATA CADANGAN':syncState==='offline'?'KONEKSI TERPUTUS':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
         <button type="button" className={`manual-refresh ${loading?'refresh-busy':''}`} onClick={()=>load(true)} title="Ambil data terbaru dari Google Sheets" aria-busy={loading}><span className="refresh-symbol" aria-hidden="true">↻</span> {loading?'Memeriksa…':'Muat ulang'}</button>
         <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
         <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>setPeriod(e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label>
@@ -181,10 +204,10 @@ function App(){
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
           {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet workbook)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
-          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer} onFinance={openFinance}/>} 
+          {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer} onFinance={openFinance} onInsight={setInsight} revisionInfo={revisionInfo} onCheck={checkConnection} checking={checking} diagnostic={diagnostic}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={openKpi} finance={data?.financialDetails} onFinance={openFinance}/>} 
           {tab==='kinerja'&&<Kinerja k={k} onKpi={setActiveKpi}/>} 
-          {tab==='penugasan'&&<Penugasan k={k} onKpi={openKpi} pkpt={data?.pkpt} onPkpt={setPkptExplorer}/>} 
+          {tab==='penugasan'&&<><Penugasan k={k} onKpi={openKpi} pkpt={data?.pkpt} onPkpt={setPkptExplorer}/><MasterInsights data={data?.integrated} compact onOpen={setInsight}/></>} 
           {tab==='terpadu'&&<IntegratedExplorer data={data?.integrated} year={year} period={period}/>} 
         </>}
         <footer>© {year} Inspektorat Daerah Kabupaten Mahakam Ulu • (SIKAP) Sistem Informasi Kinerja dan Pengawasan</footer>
@@ -192,7 +215,8 @@ function App(){
     </div>
     {pkptExplorer&&<PkptExplorer pkpt={data?.pkpt} year={year} period={period} initial={pkptExplorer} onClose={closePkpt}/>}
     {financeExplorer&&<FinanceExplorer finance={data?.financialDetails} kpi={k} year={year} period={period} initialMode={financeExplorer} onClose={closeFinance}/>}
-    {activeKpi&&<KpiModal kpi={activeKpi} k={k} data={data} year={year} period={period} onClose={()=>setActiveKpi(null)}/>} 
+    {activeKpi&&<KpiModal kpi={activeKpi} k={k} data={data} year={year} period={period} onClose={()=>setActiveKpi(null)}/>}
+    {insight&&<div className="ix-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)setInsight(null)}}><section className="ix-dialog" role="dialog" aria-modal="true" aria-label="Rincian KPI dari master kertas kerja"><div className="ix-dialog-head"><div><small>MASTER KERTAS KERJA • TA {year}</small><h2>Rincian KPI dan Data Sumber</h2></div><button type="button" onClick={()=>setInsight(null)} aria-label="Tutup rincian">×</button></div><IntegratedExplorer key={`${year}-${period}-${insight}`} data={data?.integrated} year={year} period={period} initialSection={insight}/></section></div>} 
   </div>
 }
 
@@ -205,6 +229,8 @@ function DiagnosticDetails({diagnostic}){
     {diagnostic.present===false&&<p>Minimal salah satu variable Google Sheets belum ditemukan di lingkungan Production Dashboard SIKAP.</p>}
     {diagnostic.valid===false&&diagnostic.present!==false&&<p>Periksa format JSON service account Dashboard pada Secret Cloudflare.</p>}
     {Number.isFinite(diagnostic.found)&&<p>Sheet utama ditemukan: {diagnostic.found}/{diagnostic.expected||14}{diagnostic.missing?.length?`. Belum tersedia: ${diagnostic.missing.join(', ')}`:''}.</p>}
+    {Number.isFinite(diagnostic.foundTotal)&&<p>Sumber Excel terbaru terbaca: <b>{diagnostic.foundTotal}/{diagnostic.expectedTotal}</b>. {diagnostic.missingSources?.length?`Belum ditemukan: ${diagnostic.missingSources.join(', ')}`:'Seluruh sumber terdaftar.'}</p>}
+    {diagnostic.markerPresent===false&&<p>Penanda revisi _KK_SYNC belum ditemukan. Impor ulang hanya jika diperlukan; periksa hasil sinkronisasi setelah menyimpan perubahan.</p>}
     {diagnostic.fingerprint&&<small>Fingerprint spreadsheet: <code>{diagnostic.fingerprint}</code> (bandingkan dengan diagnostik operator bila perlu)</small>}
   </div>;
 }
@@ -260,12 +286,14 @@ function MetricIcon({id}){
   </svg>;
 }
 
-function Dashboard({cards,k,data,onKpi,onPkpt,onFinance}){return <>
+function Dashboard({cards,k,data,onKpi,onPkpt,onFinance,onInsight,revisionInfo,onCheck,checking,diagnostic}){return <>
   <div className="kpis">{cards.map(c=><button type="button" aria-label={`Lihat detail ${c.label}`} className={`kpi tone-${c.tone}`} key={c.id} onClick={()=>onKpi(c)}>
     <div className="kpi-head"><span className="kpi-icon"><MetricIcon id={c.id}/></span><span className="kpi-link">LIHAT GRAFIK <b>↗</b></span></div>
     <label>{c.label}</label><strong title={c.value}>{c.value}</strong><p>{c.note}</p>
     {typeof c.progress==='number'?<div className="mini-progress"><i style={{width:`${c.progress}%`}}/></div>:<div className="kpi-decor-svg"><svg viewBox="0 0 140 24" aria-hidden="true"><path d="M2 19 Q18 14 30 16 T58 11 T86 14 T112 7 T138 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="138" cy="8" r="3" fill="currentColor"/></svg></div>}
   </button>)}</div>
+  <section className="mi-sync-panel"><div><b>STATUS SUMBER MASTER</b><small>{revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} · ${revisionInfo.updatedAt||'Waktu tidak diketahui'}`:'Revisi tidak tersedia; gunakan pemeriksaan sumber'}</small></div><button type="button" disabled={checking} onClick={onCheck}>{checking?'Memeriksa…':'Diagnostik 28 sheet'}</button>{diagnostic&&<DiagnosticDetails diagnostic={diagnostic}/>}</section>
+  <MasterInsights data={data?.integrated} pkptExecution={k?.penugasan} onOpen={section=>section==='pelaksanaan'?onPkpt({status:'all'}):onInsight(section)} revisionInfo={revisionInfo}/>
   <FinancePreview finance={data?.financialDetails} onOpen={onFinance}/>
 
   <section className="panel official-monev-panel"><div className="panel-title"><span>SUMBER EXCEL TERBARU</span><b>Laporan Monitoring & Evaluasi Renaksi Resmi</b><small>{data?.officialReport?.name||'Laporan_Monev_Renaksi_2026'}</small></div>{data?.officialReport?.available?<><div className="official-monev-values"><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Kegiatan Monev Resmi',value:num(data.officialReport.activities),note:'Kegiatan dengan pagu anggaran pada sheet laporan resmi'})}><small>KEGIATAN DENGAN PAGU</small><strong>{num(data.officialReport.activities)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Anggaran Laporan Monev',value:money(data.officialReport.plannedBudget),note:'Total pagu pada sheet laporan resmi, tidak digandakan pada KPI utama'})}><small>ANGGARAN DALAM LAPORAN</small><strong>{money(data.officialReport.plannedBudget)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Realisasi Laporan Monev',value:money(data.officialReport.realizedBudget),note:'Belum diisi berarti tidak ada angka, bukan nol'})}><small>REALISASI KEUANGAN LAPORAN</small><strong>{data.officialReport.realizedBudget===null?'Belum diisi':money(data.officialReport.realizedBudget)}</strong></button><button className="drilldown-tile" onClick={()=>onKpi({id:'official',label:'Realisasi Belum Diisi',value:num(data.officialReport.missingRealizations),note:'Jumlah kegiatan dengan nilai realisasi belum tersedia'})}><small>REALISASI BELUM DIISI</small><strong>{num(data.officialReport.missingRealizations)} kegiatan</strong></button></div><p>Angka laporan resmi dihitung dari kolom O, T, dan U pada Excel, terpisah dari KPI keuangan induk. Kolom U kosong pada file acuan; nilai kosong tidak dianggap Rp0.</p></>:<p>Sheet laporan resmi belum ditemukan pada sumber data periode ini. KPI utama tetap berasal dari sheet inti yang tersedia.</p>}</section>
