@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {buildIntegratedDetails} from '../functions/lib/integrated-details.js';
+const file=process.env.PKPT_FIXTURE;
+if(!file){console.log('SKIP official-pkpt-76: external fixture not provided');process.exit(0)}
+const sheets=JSON.parse(fs.readFileSync(file,'utf8'));
+const d=buildIntegratedDetails(sheets,Object.keys(sheets));
+assert.equal(d.agenda.length,76,'KPI agenda must count 76 individual assignments, not 56 package rows');
+assert.equal(d.pkptExecution.length,76);
+assert.equal(d.budgetPackages.length,56);
+assert.equal(d.pkptPackageBudgetTotal,3531979288);
+assert.equal(d.pkptUnmatchedCount,4);
+assert.equal(d.pkptTentativeCount,1);
+assert.deepEqual(d.pkptOrphanPackageIds,[48]);
+assert.equal(d.pkptOrphanBudget,55600000);
+assert.equal(d.pkptFundingGroups.reduce((a,g)=>a+g.rows.length,0),76);
+assert.equal(d.agenda.filter(x=>x.packageId===26).length,4);
+assert.equal(d.agenda.filter(x=>x.packageId===56).length,11);
+assert.equal(d.agenda.filter(x=>x.planned!=null).reduce((x,r)=>x+r.planned,0),d.pkptPackageBudgetTotal-d.pkptOrphanBudget);
+assert.equal(d.unique.financial,9614349692);
+assert.equal(d.unique.budget,17643979587);
+console.log('PASS: corrected workbook 29 sheets; PKPT 76 assignments, 56 budget packages, no repeated package budget, 4 unmatched, 1 tentative, 1 orphan Rp55.6m.');
