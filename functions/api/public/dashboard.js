@@ -1,6 +1,7 @@
 import {calculateMetrics} from '../../lib/metrics.js';
 import {extractPkptDetails} from '../../lib/pkpt-details.js';
 import {extractFinancialDetails} from '../../lib/financial-details.js';
+import {buildIntegratedDetails} from '../../lib/integrated-details.js';
 import {officialReportName,summarizeOfficialMonev} from '../../lib/report-schema.js';
 import { getSheetTitles, sheetsMeta, batchGetSheets, quoteSheet } from '../../lib/google.js';
 
@@ -18,6 +19,13 @@ const SHEETS = [
   'Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)',
   'Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama',
   'Monev Subkegiatan Penunjang','Rekap realisasi PKPT','Realisasi Fisik & Keu'
+];
+const EXTRA_SHEETS = [
+  'Rekap NON PKPT 2026','ST Belum Klasifikasi','Rekonsiliasi DPPA 2026',
+  'Validasi Data 2026','Dasar Indikator DPA 2026','Jadwal PKPT dan Bukti 2026',
+  'Register Bukti Capaian 2026','Audit Isian 12 Sheet 2026',
+  'Capaian Detail Penunjang 2026','ST Perlu Pemetaan Okt 2026',
+  'Ringkasan Anggaran PKPT Non','Rincian Anggaran PKPT 2026','TOTAL REKAP PKPT NON 2026'
 ];
 const num = v => {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -54,13 +62,15 @@ function completeness(rows){return rows.length?pct(rows.filter(rowHasText).lengt
 async function buildSnapshot(env, year, period='annual') {
   let meta;try{meta=await sheetsMeta(env);}catch(e){e.stage='metadata';throw e;}
   const titles=meta.sheets.map(s=>s.properties.title);
-  const resolved=SHEETS.map(c=>({canonical:c,title:resolveYearTitle(year,c,titles,period)})).filter(x=>x.title);
+  const report=officialReportName(year);
+  const sourceNames=[...SHEETS,report,...EXTRA_SHEETS];
+  const resolved=sourceNames.map(c=>({canonical:c,title:resolveYearTitle(year,c,titles,period)})).filter(x=>x.title);
   if(!resolved.length) throw Object.assign(new Error(period==='annual'?'YEAR_NOT_INITIALIZED':'PERIOD_NOT_INITIALIZED'),{code:period==='annual'?'YEAR_NOT_INITIALIZED':'PERIOD_NOT_INITIALIZED'});
-  const missing=SHEETS.filter(c=>!resolved.some(x=>x.canonical===c));
+  const missing=sourceNames.filter(c=>!resolved.some(x=>x.canonical===c));
   // A partially initialized workbook may still have useful independent KPIs.
   // Return its verified indicators, never silently represent missing data as 0.
-  const report=officialReportName(year);const reportTitle=resolveYearTitle(year,report,titles,period);
-  const sourceEntries=reportTitle?[...resolved,{canonical:report,title:reportTitle}]:resolved;
+  const reportTitle=resolveYearTitle(year,report,titles,period);
+  const sourceEntries=resolved;
   const colName=(index)=>{let n=index+1,s='';while(n){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26);}return s;};
   // Read enough columns for native column insertion, while avoiding a huge
   // read of many blank grid columns on every dashboard refresh.
@@ -111,11 +121,12 @@ async function buildSnapshot(env, year, period='annual') {
   if(absent.has('Monev output Subkegiatan Utama')||invalidSourceSheets.has('Monev output Subkegiatan Utama'))kpi.outputUtama=null;
   if(absent.has('Monev Subkegiatan Penunjang')||invalidSourceSheets.has('Monev Subkegiatan Penunjang'))kpi.outputPenunjang=null;
   const monevResmi=kpi.monevResmi||summarizeOfficialMonev(null);
-  const sheets=SHEETS.map(c=>{if(absent.has(c))return {name:c,percent:null,rows:null,available:false,status:missing.includes(c)?'missing':'empty'};const rows=byName[c]||[];return {name:c,percent:completeness(rows),rows:rows.filter(rowHasText).length,available:true};});
+  const integrated=buildIntegratedDetails(metricSheets,sourceNames);
+  const sheets=sourceNames.map(c=>{if(absent.has(c))return {name:c,percent:null,rows:null,available:false,status:missing.includes(c)?'missing':'empty'};const rows=byName[c]||[];return {name:c,percent:completeness(rows),rows:rows.filter(rowHasText).length,available:true};});
   const available=sheets.filter(s=>s.available);
   const overall=available.length?percentAverage(available.map(s=>s.percent)):null;
-  if(reportTitle)sheets.push({name:report,percent:monevResmi.activities?monevResmi.reportedRealizations/monevResmi.activities*100:0,rows:byName[report]?.length||0,measure:'Realisasi kegiatan terisi'});
-  return {pkpt,financialDetails,formulaHealth:{errorsFound:formulaErrorCount,examples:formulaErrors},partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:SHEETS.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'25.0-public-financial-explorer',kpi,sheets,overallCompleteness:overall,formulas:{
+
+  return {pkpt,financialDetails,integrated,formulaHealth:{errorsFound:formulaErrorCount,examples:formulaErrors},partial:missing.length>0||emptySheets.length>0,missingSheets:missing,emptySheets,availableSheetCount:available.length,expectedSheetCount:sourceNames.length,officialReport:{name:report,available:!!reportTitle,...monevResmi},dataCoverageNote:'Persentase sheet utama adalah baris berisi teks (indikatif), bukan pemeriksaan seluruh kolom wajib.',year,period,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'26.0-integrated-28-sheets',kpi,sheets,overallCompleteness:overall,formulas:{
     totalAnggaran:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     realisasiKeuangan:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     serapan:'Realisasi Keuangan ÷ Anggaran × 100', realisasiFisik:'Nilai fisik resmi/tertimbang dari sumber',
@@ -137,14 +148,14 @@ export async function onRequestGet({request,env,context}){
   const sourceKey=Array.from(new Uint8Array(digest)).slice(0,8).map(v=>v.toString(16).padStart(2,'0')).join('');
   const forceRefresh=url.searchParams.get('refresh')==='1';
   const cache=globalThis.caches?.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=25.0`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=26.0`);
   const cached=cache&&!forceRefresh?await cache.match(key).catch(()=>null):null;
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
     out.headers.set('cache-control','no-store');
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=25.0`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&period=${encodeURIComponent(period)}&sid=${sourceKey}&v=26.0`);
   const cacheId=`${sourceKey}:${year}:${period}`;
   let build=inflight.get(cacheId);
   if(!build){
