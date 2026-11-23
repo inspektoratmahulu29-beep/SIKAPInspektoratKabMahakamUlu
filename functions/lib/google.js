@@ -89,7 +89,7 @@ async function masterRead(env, operation, ranges=[]) {
   }
   // The configured origin is resolved server-side; no incoming request controls it.
   const endpoint=new URL('/api/sync/master',root.origin);
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),18500);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),14500);
   try{
     const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-sikap-sync-key':env.SIKAP_SYNC_SECRET,'accept':'application/json'},body:JSON.stringify({operation,ranges}),signal:controller.signal});
     const result=await response.json().catch(()=>null);
@@ -139,26 +139,38 @@ async function directValues(env,ranges) {
 export async function batchGetSheets(env,ranges){
   if(!Array.isArray(ranges)||!ranges.length)return {valueRanges:[],failedRanges:[]};
   const read=chunk=>masterBridgeConfigured(env)?masterRead(env,'values',chunk):directValues(env,chunk);
-  if(ranges.length<=16)return read(ranges);
-  const groups=[];for(let i=0;i<ranges.length;i+=10)groups.push({offset:i,ranges:ranges.slice(i,i+10)});
+  // Small groups avoid one large bridge response timing out. Even a partial
+  // Google outage must not cause successful sheets to be thrown away.
+  const groups=[];for(let i=0;i<ranges.length;i+=7)groups.push({offset:i,ranges:ranges.slice(i,i+7)});
   const valueRanges=Array(ranges.length).fill(null),failedRanges=[];
-  // At most three simultaneous bounded-size batches for the 28-source
-  // workbook. This avoids a 3-request serial waterfall on every data update.
-  const results=await Promise.allSettled(groups.map(group=>read(group.ranges)));
-  const responses=groups.map((group,i)=>({group,result:results[i]}));
-  for(const {group,result} of responses){
+  const results=await Promise.allSettled(groups.map(g=>read(g.ranges)));
+  for(let g=0;g<groups.length;g++){
+    const group=groups[g],result=results[g];
     if(result.status==='fulfilled'){
-      const response=result.value;
-      for(let i=0;i<group.ranges.length;i++)valueRanges[group.offset+i]=response.valueRanges?.[i]||{range:group.ranges[i],values:[]};
-    }else{
-      const error=result.reason;
-      // Wrong credentials must not be represented as valid blank values.
-      if([401,403,404].includes(Number(error?.status))||/AUTH|DENIED|CREDENTIAL|NOT_FOUND|UNAUTHORIZED|CONFIG/i.test(String(error?.code||'')))throw error;
-      failedRanges.push(...group.ranges.map((range,i)=>({index:group.offset+i,range,code:error?.code||'GOOGLE_READ_FAILED'})));
+      for(let i=0;i<group.ranges.length;i++)valueRanges[group.offset+i]=result.value.valueRanges?.[i]||{range:group.ranges[i],values:[]};
+      continue;
+    }
+    const error=result.reason;
+    // A bad secret or authorization must surface instead of masquerading as
+    // an empty workbook / valid numerical zero.
+    if([401,403,404].includes(Number(error?.status))||/AUTH|DENIED|CREDENTIAL|NOT_FOUND|UNAUTHORIZED|CONFIG/i.test(String(error?.code||'')))throw error;
+    // Retry split halves in parallel: prevent sequential timeout cascades.
+    const middle=Math.ceil(group.ranges.length/2);
+    const parts=[{at:0,ranges:group.ranges.slice(0,middle)},{at:middle,ranges:group.ranges.slice(middle)}].filter(x=>x.ranges.length);
+    const retried=await Promise.allSettled(parts.map(part=>read(part.ranges)));
+    for(let p=0;p<parts.length;p++){
+      const part=parts[p],attempt=retried[p];
+      if(attempt.status==='fulfilled'){
+        for(let i=0;i<part.ranges.length;i++)valueRanges[group.offset+part.at+i]=attempt.value.valueRanges?.[i]||{range:part.ranges[i],values:[]};
+      }else{
+        const e=attempt.reason;
+        if([401,403,404].includes(Number(e?.status))||/AUTH|DENIED|CREDENTIAL|NOT_FOUND|UNAUTHORIZED|CONFIG/i.test(String(e?.code||'')))throw e;
+        failedRanges.push(...part.ranges.map((range,i)=>({index:group.offset+part.at+i,range,code:e?.code||'GOOGLE_READ_FAILED'})));
+      }
     }
   }
   if(failedRanges.length===ranges.length){
-    const err=new Error('Semua kelompok sumber gagal dibaca');err.code='GOOGLE_SHEETS_UNAVAILABLE';err.stage='values';throw err;
+    const err=new Error('Seluruh sumber sementara belum dapat dibaca');err.code='GOOGLE_SHEETS_UNAVAILABLE';err.stage='values';throw err;
   }
   return {valueRanges,failedRanges};
 }
