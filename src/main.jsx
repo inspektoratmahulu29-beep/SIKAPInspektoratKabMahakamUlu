@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import './styles.css';
 import PkptExplorer,{PkptPreview} from './PkptExplorer.jsx';
 import FinanceExplorer,{FinancePreview} from './FinanceExplorer.jsx';
+import IntegratedExplorer from './IntegratedExplorer.jsx';
 
 const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
  ...Array.from({length:12},(_,i)=>({value:`month-${String(i+1).padStart(2,'0')}`,label:new Intl.DateTimeFormat('id-ID',{month:'long'}).format(new Date(2026,i,1))})),
@@ -40,7 +41,7 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'25.0'});
+      const params=new URLSearchParams({year:String(year),period,v:'26.0'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
@@ -117,7 +118,7 @@ function App(){
     {id:'output',label:'Total Output',value:num(outputTotal(k)),note:`Utama ${num(k.outputUtama)} • Penunjang ${num(k.outputPenunjang)}`,icon:'▦',tone:'rose'}
   ],[k]);
 
-  const sourceTitle=tab==='dashboard'?'SISTEM INFORMASI KINERJA DAN PENGAWASAN':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
+  const sourceTitle=tab==='dashboard'?'SISTEM INFORMASI KINERJA DAN PENGAWASAN':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':tab==='terpadu'?'Analitik Terpadu 28 Sheet':'Penugasan & Output';
 
   return <div className="app">
     <header className="topbar">
@@ -145,7 +146,7 @@ function App(){
       <aside className="side">
         <div className="side-heading"><span>MONITORING</span><b>Realisasi Kinerja</b></div>
         {[
-          ['dashboard','⌂','Dashboard'],['realisasi','◒','Realisasi'],['kinerja','◫','Kinerja'],['penugasan','◎','Penugasan']
+          ['dashboard','⌂','Dashboard'],['realisasi','◒','Realisasi'],['kinerja','◫','Kinerja'],['penugasan','◎','Penugasan'],['terpadu','▤','Analitik Terpadu']
         ].map(([id,ic,t])=><button key={id} className={tab===id?'nav active':'nav'} onClick={()=>setTab(id)}><span>{ic}</span>{t}<i>›</i></button>)}
         <div className="side-card">
           <div className="orbit-mini"><span className="orbit-dot"/></div>
@@ -178,12 +179,13 @@ function App(){
         {loading&&!data?<LoadingScreen progress={loadProgress} year={year}/>:error&&!data?<ConnectionPanel error={error} code={errorCode} stage={errorStage} year={year} period={period} lastAttempt={lastAttempt} attemptCount={attemptCount} loading={loading} diagnostic={diagnostic} checking={checking} onRetry={()=>load(true)} onCheck={checkConnection}/>:<>
           {data&&syncState==='stale'&&<div className="sources-warning" role="status"><b>Data cadangan — sinkronisasi langsung sedang terganggu</b><p>Indikator di bawah berasal dari pembacaan Google Sheets terakhir yang berhasil. Waktu data: {data.updatedAt?new Date(data.updatedAt).toLocaleString('id-ID'):'tidak diketahui'}. Gunakan Muat ulang atau diagnostik untuk memeriksa koneksi terbaru.</p><div className="retry-actions"><button type="button" onClick={()=>load(true)}>Muat ulang sekarang</button><button type="button" onClick={checkConnection} disabled={checking}>{checking?'Memeriksa…':'Periksa koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
-          {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet utama)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
+          {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet workbook)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
           {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={openKpi} onPkpt={setPkptExplorer} onFinance={openFinance}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={openKpi} finance={data?.financialDetails} onFinance={openFinance}/>} 
           {tab==='kinerja'&&<Kinerja k={k} onKpi={setActiveKpi}/>} 
           {tab==='penugasan'&&<Penugasan k={k} onKpi={openKpi} pkpt={data?.pkpt} onPkpt={setPkptExplorer}/>} 
+          {tab==='terpadu'&&<IntegratedExplorer data={data?.integrated} year={year} period={period}/>} 
         </>}
         <footer>© {year} Inspektorat Daerah Kabupaten Mahakam Ulu • (SIKAP) Sistem Informasi Kinerja dan Pengawasan</footer>
       </main>
