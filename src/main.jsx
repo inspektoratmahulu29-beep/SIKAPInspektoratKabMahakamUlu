@@ -34,7 +34,7 @@ function App(){
   const data=snapshot?.year===year&&(snapshot?.period||'annual')===period?snapshot:null;
   const requestRef=useRef(null),requestNumberRef=useRef(0),retryRef=useRef({failures:0,nextAt:0});
   const load=useCallback(async(force=false)=>{
-    // Automatic polling never interrupts a request. Manual reload can supersede a stalled one.
+    // Automatic polling never interrupts a request and respects exponential backoff.
     if(!force&&(requestRef.current||Date.now()<retryRef.current.nextAt))return;
     if(requestRef.current)requestRef.current.abort();
     const controller=new AbortController();requestRef.current=controller;
@@ -44,7 +44,7 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'26.0'});
+      const params=new URLSearchParams({year:String(year),period,v:'26.1'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
@@ -52,13 +52,13 @@ function App(){
       if(!j||typeof j!=='object'||!j.kpi||j.year!==year||(j.period||'annual')!==period){const exception=new Error('Respons server tidak sesuai tahun, periode, atau format data yang dipilih.');exception.code='SOURCE_MISMATCH';throw exception;}
       if(requestRef.current!==controller)return;
       lastFullRef.current=Date.now();setLoadProgress(100);setSnapshot(j);setError('');setErrorCode('');setLastSync(r.headers.get('x-dashboard-cache')==='STALE'&&j.updatedAt?new Date(j.updatedAt):new Date());
-      const state=r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live';setSyncState(state);
+      const state=r.headers.get('x-dashboard-cache')==='STALE'?'stale':(j.failedReadSheets?.length?'partial':'live');setSyncState(state);
       retryRef.current={failures:0,nextAt:Date.now()+(state==='stale'?12000:7000)};
     }catch(e){
       if(requestRef.current!==controller)return;
       if(controller.signal.aborted&&!timedOut)return;
       const code=timedOut?'CLIENT_TIMEOUT':e.code||(e.name==='AbortError'?'CLIENT_TIMEOUT':'NETWORK_ERROR');
-      const friendly={CLIENT_TIMEOUT:'Server belum merespons dalam 25 detik. Periksa status sumber lalu coba lagi.',NETWORK_ERROR:'Koneksi ke server Dashboard gagal. Periksa jaringan dan status server.',GOOGLE_CONFIG_MISSING:'Konfigurasi Google Sheets pada proyek Dashboard belum lengkap.',GOOGLE_ACCESS_DENIED:'Akun layanan Dashboard belum diberi akses membaca spreadsheet pusat.',GOOGLE_AUTH_FAILED:'Autentikasi Google pada proyek Dashboard gagal.',GOOGLE_CREDENTIAL_INVALID:'Kredensial Google pada proyek Dashboard tidak valid.',GOOGLE_TIMEOUT:'Google Sheets terlalu lama merespons. Silakan coba lagi.',GOOGLE_RATE_LIMITED:'Permintaan Google Sheets sedang dibatasi. Sistem akan mencoba kembali secara bertahap.',YEAR_NOT_INITIALIZED:'Data tahun yang dipilih belum ditemukan pada sumber pusat.',PERIOD_NOT_INITIALIZED:'Data periode yang dipilih belum ditemukan pada sumber pusat.'};
+      const friendly={CLIENT_TIMEOUT:'Server belum merespons dalam 25 detik. Periksa status sumber lalu coba lagi.',NETWORK_ERROR:'Koneksi ke server Dashboard gagal. Periksa jaringan dan status server.',GOOGLE_CONFIG_MISSING:'Konfigurasi Google Sheets pada proyek Dashboard belum lengkap.',GOOGLE_ACCESS_DENIED:'Akun layanan Dashboard belum diberi akses membaca spreadsheet pusat.',GOOGLE_AUTH_FAILED:'Autentikasi Google pada proyek Dashboard gagal.',GOOGLE_CREDENTIAL_INVALID:'Kredensial Google pada proyek Dashboard tidak valid.',GOOGLE_TIMEOUT:'Google Sheets terlalu lama merespons. Silakan coba lagi.',GOOGLE_RATE_LIMITED:'Permintaan Google Sheets sedang dibatasi. Sistem akan mencoba kembali secara bertahap.',SYNC_UNAUTHORIZED:'Kunci sinkronisasi SIKAP dan Kertas Kerja tidak sama.',MASTER_SYNC_CONFIG_INCOMPLETE:'Koneksi ke Kertas Kerja belum dikonfigurasi lengkap di Cloudflare.',MASTER_SYNC_UNAVAILABLE:'Backend Kertas Kerja belum dapat dijangkau.',MASTER_SYNC_TIMEOUT:'Kertas Kerja belum merespons permintaan data.',MASTER_GOOGLE_UNAVAILABLE:'Backend Kertas Kerja belum dapat membaca Google Sheets.',YEAR_NOT_INITIALIZED:'Data tahun yang dipilih belum ditemukan pada sumber pusat.',PERIOD_NOT_INITIALIZED:'Data periode yang dipilih belum ditemukan pada sumber pusat.'};
       setError(friendly[code]||e.message||'Data sumber tidak berhasil dibaca.');setErrorCode(code);setErrorStage(e.stage||'');setSyncState('offline');
       const failures=retryRef.current.failures+1;
       retryRef.current={failures,nextAt:Date.now()+Math.min(60000,8000*(2**Math.min(failures-1,3)))};
@@ -74,7 +74,7 @@ function App(){
     try{
       const r=await fetch(`/api/public/connection?year=${year}`,{cache:'no-store',signal:controller.signal});
       const j=await r.json();
-      setDiagnostic({ok:!!j.ok,code:j.code||`HTTP_${r.status}`,message:j.message||'Pemeriksaan koneksi selesai.',present:j.googleConfigPresent,valid:j.credentialStructureValid,found:j.coreSheetsFound,expected:j.coreSheetsExpected,missing:j.missingCore||[],foundTotal:j.totalSourcesFound,expectedTotal:j.totalSourcesExpected,missingSources:j.missingSources||[],markerPresent:j.revisionMarkerPresent,fingerprint:j.spreadsheetFingerprint});
+      setDiagnostic({ok:!!j.ok,code:j.code||`HTTP_${r.status}`,message:j.message||'Pemeriksaan koneksi selesai.',present:j.googleConfigPresent,valid:j.credentialStructureValid,found:j.coreSheetsFound,expected:j.coreSheetsExpected,missing:j.missingCore||[],foundTotal:j.totalSourcesFound,expectedTotal:j.totalSourcesExpected,missingSources:j.missingSources||[],markerPresent:j.revisionMarkerPresent,fingerprint:j.spreadsheetFingerprint,sourceMode:j.sourceMode,bridgeConfigured:j.bridgeConfigured});
     }catch(e){setDiagnostic({ok:false,code:e.name==='AbortError'?'DIAGNOSTIC_TIMEOUT':'NETWORK_ERROR',message:'Pemeriksaan sumber tidak dapat diselesaikan. Periksa koneksi jaringan atau log Pages Functions.'});}
     finally{clearTimeout(timer);setChecking(false);}
   },[year]);
@@ -104,13 +104,13 @@ function App(){
         const j=await r.json();setRevisionInfo(j);
         const next=j.markerAvailable&&j.revision?String(j.revision):null;
         if(next && revisionRef.current!==next){
-          if(revisionRef.current!==null)load(true);
-          else if(Date.now()-lastFullRef.current>15000)load(true);
+          if(Date.now()>=retryRef.current.nextAt)load(true);
+          else if(revisionRef.current===null&&Date.now()-lastFullRef.current>15000&&Date.now()>=retryRef.current.nextAt)load(false);
           revisionRef.current=next;
-        }else if(Date.now()-lastFullRef.current>=60000)load(true);
+        }else if(Date.now()-lastFullRef.current>=60000)load(false);
       }catch{
         setRevisionInfo({ok:false,markerAvailable:false,reason:'REVISION_READ_FAILED'});
-        if(Date.now()-lastFullRef.current>=60000)load(true);
+        if(Date.now()-lastFullRef.current>=60000)load(false);
       }finally{revisionBusyRef.current=false;}
     };
     checkRevision();
@@ -158,7 +158,7 @@ function App(){
         </div>
       </div>
       <div className="top-actions">
-        <div className={`realtime status-${syncState}`} role="status" title={revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} • ${revisionInfo.updatedAt}`:'Penanda revisi master belum terverifikasi; refresh cadangan tiap 60 detik'}><span className="live-dot"/> {syncState==='live'?(revisionInfo?.markerAvailable?'TERHUBUNG KE MASTER':'DATA TERBACA'):syncState==='stale'?'DATA CADANGAN':syncState==='offline'?'KONEKSI TERPUTUS':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <div className={`realtime status-${syncState}`} role="status" title={revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} • ${revisionInfo.updatedAt}`:'Penanda revisi master belum terverifikasi; refresh cadangan tiap 60 detik'}><span className="live-dot"/> {syncState==='live'?(revisionInfo?.markerAvailable?'TERHUBUNG KE MASTER':'DATA TERBACA'):syncState==='stale'?'DATA CADANGAN':syncState==='partial'?'SEBAGIAN SUMBER':syncState==='offline'?'KONEKSI TERPUTUS':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
         <button type="button" className={`manual-refresh ${loading?'refresh-busy':''}`} onClick={()=>load(true)} title="Ambil data terbaru dari Google Sheets" aria-busy={loading}><span className="refresh-symbol" aria-hidden="true">↻</span> {loading?'Memeriksa…':'Muat ulang'}</button>
         <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
         <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>setPeriod(e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label>
@@ -201,6 +201,7 @@ function App(){
 
         {loading&&!data?<LoadingScreen progress={loadProgress} year={year}/>:error&&!data?<ConnectionPanel error={error} code={errorCode} stage={errorStage} year={year} period={period} lastAttempt={lastAttempt} attemptCount={attemptCount} loading={loading} diagnostic={diagnostic} checking={checking} onRetry={()=>load(true)} onCheck={checkConnection}/>:<>
           {data&&syncState==='stale'&&<div className="sources-warning" role="status"><b>Data cadangan — sinkronisasi langsung sedang terganggu</b><p>Indikator di bawah berasal dari pembacaan Google Sheets terakhir yang berhasil. Waktu data: {data.updatedAt?new Date(data.updatedAt).toLocaleString('id-ID'):'tidak diketahui'}. Gunakan Muat ulang atau diagnostik untuk memeriksa koneksi terbaru.</p><div className="retry-actions"><button type="button" onClick={()=>load(true)}>Muat ulang sekarang</button><button type="button" onClick={checkConnection} disabled={checking}>{checking?'Memeriksa…':'Periksa koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
+          {data?.failedReadSheets?.length>0&&<div className="sources-warning" role="alert"><b>Beberapa sheet gagal dibaca ({data.failedReadSheets.length})</b><p>{data.failedReadSheets.map(x=>x.sheet).join(', ')}. KPI dari sumber ini dinyatakan belum tersedia, bukan nol.</p><button onClick={()=>load(true)} type="button">Baca ulang sumber</button></div>}
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
           {data?.partial&&<div className="sources-warning" role="status"><b>Data belum lengkap ({data.availableSheetCount}/{data.expectedSheetCount} sheet workbook)</b><p>{data.missingSheets?.length>0?`Sheet belum ditemukan: ${data.missingSheets.join(', ')}. `:''}{data.emptySheets?.length>0?`Sheet masih kosong: ${data.emptySheets.join(', ')}. `:''}Indikator tanpa data valid ditampilkan sebagai —, bukan 0.</p><button onClick={checkConnection} type="button">Periksa sumber data</button></div>}
           {error&&data&&<div className="sources-warning" role="status"><b>Menampilkan data terakhir yang tersedia — belum tersinkron</b><p>{error} {errorCode&&<code>{errorCode}</code>}</p><div className="retry-actions"><button onClick={()=>load(true)} type="button">{loading?'Memeriksa…':'Coba sinkronkan lagi'}</button><button onClick={checkConnection} type="button" disabled={checking}>{checking?'Memeriksa sumber…':'Diagnostik koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
@@ -226,7 +227,8 @@ function DiagnosticDetails({diagnostic}){
   return <div className={`connection-diagnostics ${diagnostic.ok?'diag-ok':'diag-bad'}`} role="status">
     <b>{diagnostic.ok?'Pemeriksaan sumber berhasil':'Sumber data belum siap'} <code>{diagnostic.code}</code></b>
     <p>{diagnostic.message}</p>
-    {diagnostic.present===false&&<p>Minimal salah satu variable Google Sheets belum ditemukan di lingkungan Production Dashboard SIKAP.</p>}
+    {diagnostic.sourceMode&&<p>Jalur pembacaan: <b>{diagnostic.sourceMode==='kertas-kerja-master'?'Backend Kertas Kerja master (aman)':'Google Sheets langsung dari SIKAP'}</b>.</p>}
+    {diagnostic.present===false&&<p>Variabel sumber master belum lengkap di lingkungan Production Dashboard SIKAP.</p>}
     {diagnostic.valid===false&&diagnostic.present!==false&&<p>Periksa format JSON service account Dashboard pada Secret Cloudflare.</p>}
     {Number.isFinite(diagnostic.found)&&<p>Sheet utama ditemukan: {diagnostic.found}/{diagnostic.expected||14}{diagnostic.missing?.length?`. Belum tersedia: ${diagnostic.missing.join(', ')}`:''}.</p>}
     {Number.isFinite(diagnostic.foundTotal)&&<p>Sumber Excel terbaru terbaca: <b>{diagnostic.foundTotal}/{diagnostic.expectedTotal}</b>. {diagnostic.missingSources?.length?`Belum ditemukan: ${diagnostic.missingSources.join(', ')}`:'Seluruh sumber terdaftar.'}</p>}
@@ -242,7 +244,7 @@ function ConnectionPanel({error,code,stage,year,period,lastAttempt,attemptCount,
       <h2>Data belum dapat ditampilkan</h2>
       <p>{error}</p>
       <div className="connection-meta"><code>{code||'CONNECTION_FAILED'}</code><span>Percobaan: {attemptCount}</span>{stage&&stage!=='unknown'&&<span>Tahap: {stage==='metadata'?'pemeriksaan sumber':stage==='values'?'pengambilan nilai':stage}</span>}{lastAttempt&&<span>Terakhir diperiksa {lastAttempt.toLocaleTimeString('id-ID')}</span>}</div>
-      <p className="connection-help">Dashboard membaca Google Sheets secara mandiri. Tombol di bawah mencoba koneksi baru; bila tetap gagal, gunakan diagnostik untuk mengetahui jenis masalahnya.</p>
+      <p className="connection-help">Dashboard membaca sumber master melalui koneksi Cloudflare yang dikonfigurasi. Tombol di bawah mencoba koneksi baru; bila tetap gagal, gunakan diagnostik untuk mengetahui jenis masalahnya.</p>
       <div className="retry-actions"><button className="retry-primary" type="button" onClick={onRetry} aria-busy={loading}><span className="refresh-symbol">↻</span>{loading?' Memeriksa…':' Muat ulang data'}</button><button className="retry-secondary" type="button" onClick={onCheck} disabled={checking}>{checking?'Memeriksa sumber…':'Periksa koneksi sumber'}</button></div>
       <DiagnosticDetails diagnostic={diagnostic}/>
     </div>

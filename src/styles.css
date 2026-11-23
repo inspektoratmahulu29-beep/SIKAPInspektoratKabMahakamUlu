@@ -269,3 +269,5 @@ html{scroll-behavior:smooth}body{overflow-x:hidden;-webkit-tap-highlight-color:t
   .brand-copy span{font-size:9px}
 }
 @media(prefers-reduced-motion:reduce){.refresh-busy .refresh-symbol,.retry-primary[aria-busy="true"] .refresh-symbol{animation:none!important}}
+
+.realtime.status-partial{color:#e9d391}.realtime.status-partial .live-dot{background:#e9c67d;box-shadow:0 0 0 4px rgba(233,198,125,.12);animation:none}
