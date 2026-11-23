@@ -13,6 +13,7 @@ const PERIOD_OPTIONS=[{value:'annual',label:'Tahunan'},
 const initialQuery=new URLSearchParams(window.location.search);
 const initialPeriod=PERIOD_OPTIONS.some(x=>x.value===initialQuery.get('period'))?initialQuery.get('period'):'annual';
 const initialYear=/^20\d{2}$/.test(initialQuery.get('year')||'')?Number(initialQuery.get('year')):2026;
+const startFollowingLatest = initialQuery.get('follow')==='1' || (initialQuery.get('follow')!=='0' && !initialQuery.has('year') && !initialQuery.has('period'));
 
 const money=n=>(n==null||n==='')?'—':new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0).replace(/\u00a0/g,' ');
 const num=n=>(n==null||n==='')?'—':new Intl.NumberFormat('id-ID',{maximumFractionDigits:0}).format(Number(n)||0);
@@ -28,12 +29,20 @@ function App(){
   const [tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pkptExplorer,setPkptExplorer]=useState(null),[financeExplorer,setFinanceExplorer]=useState(null),[insight,setInsight]=useState(null),[pulse,setPulse]=useState(0);
   const [lastSync,setLastSync]=useState(null),[lastAttempt,setLastAttempt]=useState(null),[syncState,setSyncState]=useState('connecting');
   const [revisionInfo,setRevisionInfo]=useState(null);
+  const [availablePeriods,setAvailablePeriods]=useState(null);
+  const [followLatest,setFollowLatest]=useState(startFollowingLatest);
+  const followLatestRef=useRef(startFollowingLatest);
+  const selectionRef=useRef({year:initialYear,period:initialPeriod});
+  const inspectedRevisionRef=useRef(null);
+  const latestWrittenPeriodRef=useRef(null);
+  followLatestRef.current=followLatest;
+  selectionRef.current={year,period};
   const revisionRef=useRef(null),lastFullRef=useRef(0),revisionBusyRef=useRef(false);
   const [attemptCount,setAttemptCount]=useState(0),[diagnostic,setDiagnostic]=useState(null),[checking,setChecking]=useState(false);
   // A snapshot from another year/period must never appear under the newly selected heading.
   const data=snapshot?.year===year&&(snapshot?.period||'annual')===period?snapshot:null;
   const requestRef=useRef(null),requestNumberRef=useRef(0),retryRef=useRef({failures:0,nextAt:0});
-  const load=useCallback(async(force=false)=>{
+  const load=useCallback(async(force=false,acknowledgeRevision=null)=>{
     // Automatic polling never interrupts a request and respects exponential backoff.
     if(!force&&(requestRef.current||Date.now()<retryRef.current.nextAt))return;
     if(requestRef.current)requestRef.current.abort();
@@ -44,22 +53,22 @@ function App(){
     setLoading(true);setLoadProgress(20);setLastAttempt(new Date());setAttemptCount(requestId);
     setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setSyncState(s=>s==='live'?'live':'connecting');
     try{
-      const params=new URLSearchParams({year:String(year),period,v:'26.1'});
+      const params=new URLSearchParams({year:String(year),period,v:'27.0'});
       if(force)params.set('refresh','1');
       const r=await fetch(`/api/public/dashboard?${params}`,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
       const raw=await r.text();let j={};try{j=JSON.parse(raw);}catch{}
       if(!r.ok||r.status===304){const exception=new Error(j.error||j.message||`Server mengembalikan HTTP ${r.status}`);exception.code=j.code||(r.status===304?'EMPTY_CACHE':`HTTP_${r.status}`);exception.stage=j.stage||'';throw exception;}
       if(!j||typeof j!=='object'||!j.kpi||j.year!==year||(j.period||'annual')!==period){const exception=new Error('Respons server tidak sesuai tahun, periode, atau format data yang dipilih.');exception.code='SOURCE_MISMATCH';throw exception;}
       if(requestRef.current!==controller)return;
-      lastFullRef.current=Date.now();setLoadProgress(100);setSnapshot(j);setError('');setErrorCode('');setLastSync(r.headers.get('x-dashboard-cache')==='STALE'&&j.updatedAt?new Date(j.updatedAt):new Date());
-      const state=r.headers.get('x-dashboard-cache')==='STALE'?'stale':(j.failedReadSheets?.length?'partial':'live');setSyncState(state);
-      retryRef.current={failures:0,nextAt:Date.now()+(state==='stale'?12000:7000)};
+      lastFullRef.current=Date.now();if(acknowledgeRevision)revisionRef.current=acknowledgeRevision;setLoadProgress(100);setSnapshot(j);setError('');setErrorCode('');setLastSync(r.headers.get('x-dashboard-cache')==='STALE'&&j.updatedAt?new Date(j.updatedAt):new Date());
+      const state=r.headers.get('x-dashboard-cache')==='STALE'?'stale':(j.failedReadSheets?.length||j.partial?'partial':'live');setSyncState(state);
+      retryRef.current={failures:0,nextAt:Date.now()+(state==='stale'?8000:0)};
     }catch(e){
       if(requestRef.current!==controller)return;
       if(controller.signal.aborted&&!timedOut)return;
       const code=timedOut?'CLIENT_TIMEOUT':e.code||(e.name==='AbortError'?'CLIENT_TIMEOUT':'NETWORK_ERROR');
-      const friendly={CLIENT_TIMEOUT:'Server belum merespons dalam 25 detik. Periksa status sumber lalu coba lagi.',NETWORK_ERROR:'Koneksi ke server Dashboard gagal. Periksa jaringan dan status server.',GOOGLE_CONFIG_MISSING:'Konfigurasi Google Sheets pada proyek Dashboard belum lengkap.',GOOGLE_ACCESS_DENIED:'Akun layanan Dashboard belum diberi akses membaca spreadsheet pusat.',GOOGLE_AUTH_FAILED:'Autentikasi Google pada proyek Dashboard gagal.',GOOGLE_CREDENTIAL_INVALID:'Kredensial Google pada proyek Dashboard tidak valid.',GOOGLE_TIMEOUT:'Google Sheets terlalu lama merespons. Silakan coba lagi.',GOOGLE_RATE_LIMITED:'Permintaan Google Sheets sedang dibatasi. Sistem akan mencoba kembali secara bertahap.',SYNC_UNAUTHORIZED:'Kunci sinkronisasi SIKAP dan Kertas Kerja tidak sama.',MASTER_SYNC_CONFIG_INCOMPLETE:'Koneksi ke Kertas Kerja belum dikonfigurasi lengkap di Cloudflare.',MASTER_SYNC_UNAVAILABLE:'Backend Kertas Kerja belum dapat dijangkau.',MASTER_SYNC_TIMEOUT:'Kertas Kerja belum merespons permintaan data.',MASTER_GOOGLE_UNAVAILABLE:'Backend Kertas Kerja belum dapat membaca Google Sheets.',YEAR_NOT_INITIALIZED:'Data tahun yang dipilih belum ditemukan pada sumber pusat.',PERIOD_NOT_INITIALIZED:'Data periode yang dipilih belum ditemukan pada sumber pusat.'};
-      setError(friendly[code]||e.message||'Data sumber tidak berhasil dibaca.');setErrorCode(code);setErrorStage(e.stage||'');setSyncState('offline');
+      const friendly={CLIENT_TIMEOUT:'Server belum merespons dalam 25 detik. Periksa status sumber lalu coba lagi.',NETWORK_ERROR:'Koneksi ke server Dashboard gagal. Periksa jaringan dan status server.',GOOGLE_CONFIG_MISSING:'Konfigurasi Google Sheets pada proyek Dashboard belum lengkap.',GOOGLE_ACCESS_DENIED:'Akun layanan Dashboard belum diberi akses membaca spreadsheet pusat.',GOOGLE_AUTH_FAILED:'Autentikasi Google pada proyek Dashboard gagal.',GOOGLE_CREDENTIAL_INVALID:'Kredensial Google pada proyek Dashboard tidak valid.',GOOGLE_TIMEOUT:'Google Sheets terlalu lama merespons. Silakan coba lagi.',GOOGLE_RATE_LIMITED:'Permintaan Google Sheets sedang dibatasi. Sistem akan mencoba kembali secara bertahap.',SYNC_UNAUTHORIZED:'Kunci sinkronisasi SIKAP dan Kertas Kerja tidak sama.',MASTER_SYNC_CONFIG_INCOMPLETE:'Koneksi ke Kertas Kerja belum dikonfigurasi lengkap di Cloudflare.',MASTER_SYNC_UNAVAILABLE:'Backend Kertas Kerja belum dapat dijangkau.',MASTER_SYNC_TIMEOUT:'Kertas Kerja belum merespons permintaan data.',MASTER_GOOGLE_UNAVAILABLE:'Backend Kertas Kerja belum dapat membaca Google Sheets.',MASTER_GOOGLE_CONFIG_MISSING:'Koneksi Google Sheets di backend Kertas Kerja belum dikonfigurasi.',MASTER_GOOGLE_ACCESS_DENIED:'Service account Kertas Kerja belum memiliki izin membaca Google Sheets.',MASTER_SPREADSHEET_NOT_FOUND:'Spreadsheet master tidak ditemukan dari backend Kertas Kerja.',MASTER_GOOGLE_RATE_LIMITED:'Google Sheets membatasi pembacaan; sistem akan mencoba kembali.',YEAR_NOT_INITIALIZED:'Data tahun yang dipilih belum ditemukan pada sumber pusat.',PERIOD_NOT_INITIALIZED:'Data periode yang dipilih belum ditemukan pada sumber pusat.'};
+      setError(friendly[code]||e.message||'Data sumber tidak berhasil dibaca.');setErrorCode(code);setErrorStage(e.stage||'');setSyncState(code==='PERIOD_NOT_INITIALIZED'||code==='YEAR_NOT_INITIALIZED'?'no-period':'offline');
       const failures=retryRef.current.failures+1;
       retryRef.current={failures,nextAt:Date.now()+Math.min(60000,8000*(2**Math.min(failures-1,3)))};
     }finally{
@@ -72,12 +81,38 @@ function App(){
     setChecking(true);setDiagnostic(null);
     const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
     try{
-      const r=await fetch(`/api/public/connection?year=${year}`,{cache:'no-store',signal:controller.signal});
+      const r=await fetch(`/api/public/connection?year=${year}&period=${encodeURIComponent(period)}`,{cache:'no-store',signal:controller.signal});
       const j=await r.json();
       setDiagnostic({ok:!!j.ok,code:j.code||`HTTP_${r.status}`,message:j.message||'Pemeriksaan koneksi selesai.',present:j.googleConfigPresent,valid:j.credentialStructureValid,found:j.coreSheetsFound,expected:j.coreSheetsExpected,missing:j.missingCore||[],foundTotal:j.totalSourcesFound,expectedTotal:j.totalSourcesExpected,missingSources:j.missingSources||[],markerPresent:j.revisionMarkerPresent,fingerprint:j.spreadsheetFingerprint,sourceMode:j.sourceMode,bridgeConfigured:j.bridgeConfigured});
     }catch(e){setDiagnostic({ok:false,code:e.name==='AbortError'?'DIAGNOSTIC_TIMEOUT':'NETWORK_ERROR',message:'Pemeriksaan sumber tidak dapat diselesaikan. Periksa koneksi jaringan atau log Pages Functions.'});}
     finally{clearTimeout(timer);setChecking(false);}
-  },[year]);
+  },[year,period]);
+
+  // The period index is based on actual 2026__M11__... snapshots in KKK,
+  // not on the browser clock and not on 28 replicated annual sheets.
+  const refreshAvailablePeriods=useCallback(async(preferred=null,follow=false)=>{
+    try{
+      const r=await fetch('/api/public/periods',{cache:'no-store',headers:{Accept:'application/json'}});
+      const j=await r.json();
+      if(!r.ok||!j.ok||!Array.isArray(j.years))return {ok:false,changed:false};
+      setAvailablePeriods(j.byYear||{});
+      setYears(previous=>[...new Set([...previous,...j.years])].sort((a,b)=>b-a));
+      if(!follow||!followLatestRef.current)return {ok:true,changed:false};
+      const canUse=(y,p)=>!!j.byYear?.[y]?.periods?.some(entry=>entry.value===p);
+      const selected=preferred&&canUse(preferred.year,preferred.period)
+        ? preferred : {year:j.latestYear,period:j.latestPeriod};
+      if(!selected.year||!selected.period||!canUse(selected.year,selected.period))return {ok:true,changed:false};
+      const current=selectionRef.current;
+      const changed=current.year!==selected.year||current.period!==selected.period;
+      if(changed){setYear(selected.year);setPeriod(selected.period);}
+      return {ok:true,changed};
+    }catch{return {ok:false,changed:false};}
+  },[]);
+  useEffect(()=>{
+    refreshAvailablePeriods(latestWrittenPeriodRef.current,followLatestRef.current);
+    const timer=setInterval(()=>{if(document.visibilityState==='visible')refreshAvailablePeriods(latestWrittenPeriodRef.current,followLatestRef.current);},30000);
+    return()=>clearInterval(timer);
+  },[refreshAvailablePeriods]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -93,8 +128,9 @@ function App(){
   useEffect(()=>{
     retryRef.current={failures:0,nextAt:0};setLoading(true);setError('');setErrorCode('');setErrorStage('');setDiagnostic(null);setLoadProgress(12);
     load(false);
-    // Check a real revision written by Web Kertas Kerja. Do not poll a heavy 28-sheet snapshot every 2.5s.
-    // If the marker does not yet exist or cannot be read, a 60s full-refresh fallback still works.
+    // Five-second revision probe is lightweight; 28-sheet data is requested
+    // only after revision changes. Avoid acknowledging a revision until its
+    // corresponding dashboard snapshot has been read successfully.
     const checkRevision=async()=>{
       if(document.visibilityState!=='visible'||navigator.onLine===false||revisionBusyRef.current)return;
       revisionBusyRef.current=true;
@@ -102,26 +138,42 @@ function App(){
         const r=await fetch('/api/public/revision',{cache:'no-store'});
         if(!r.ok)throw new Error('REVISION_UNAVAILABLE');
         const j=await r.json();setRevisionInfo(j);
+        if(j.markerAvailable&&j.year&&j.period)latestWrittenPeriodRef.current={year:Number(j.year),period:String(j.period)};
         const next=j.markerAvailable&&j.revision?String(j.revision):null;
-        if(next && revisionRef.current!==next){
-          if(Date.now()>=retryRef.current.nextAt)load(true);
-          else if(revisionRef.current===null&&Date.now()-lastFullRef.current>15000&&Date.now()>=retryRef.current.nextAt)load(false);
-          revisionRef.current=next;
-        }else if(Date.now()-lastFullRef.current>=60000)load(false);
+        if(next&&revisionRef.current!==next){
+          if(followLatestRef.current&&inspectedRevisionRef.current!==next){
+            inspectedRevisionRef.current=next;
+            const choice=await refreshAvailablePeriods(
+              Number.isInteger(Number(j.year))&&j.period?{year:Number(j.year),period:String(j.period)}:null,true);
+            if(choice.changed)return; // The year/period change starts a new load.
+          }
+          if(!requestRef.current&&Date.now()>=retryRef.current.nextAt)load(true,next);
+        }else if(!requestRef.current&&Date.now()-lastFullRef.current>=45000)load(true);
       }catch{
         setRevisionInfo({ok:false,markerAvailable:false,reason:'REVISION_READ_FAILED'});
-        if(Date.now()-lastFullRef.current>=60000)load(false);
+        if(!requestRef.current&&Date.now()-lastFullRef.current>=45000)load(true);
       }finally{revisionBusyRef.current=false;}
     };
+    // Loading the original selected period first avoids a blank initial screen.
+    const poll=setInterval(checkRevision,5000);
     checkRevision();
-    const poll=setInterval(checkRevision,18000);
     const anim=setInterval(()=>setPulse(v=>v+1),1800);
-    const onVisible=()=>{if(document.visibilityState==='visible')load(false);};
-    const onOnline=()=>load(true);
+    const onVisible=()=>{if(document.visibilityState==='visible')checkRevision();};
+    const onOnline=()=>{revisionRef.current=null;load(true);checkRevision();};
     document.addEventListener('visibilitychange',onVisible);window.addEventListener('focus',onVisible);window.addEventListener('online',onOnline);
-    const url=new URL(window.location.href);url.searchParams.set('year',String(year));url.searchParams.set('period',period);history.replaceState(null,'',url);
+    const url=new URL(window.location.href);url.searchParams.set('year',String(year));url.searchParams.set('period',period);url.searchParams.set('follow',followLatestRef.current?'1':'0');history.replaceState(null,'',url);
     return()=>{clearInterval(poll);clearInterval(anim);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);window.removeEventListener('online',onOnline);requestRef.current?.abort();requestRef.current=null;};
-  },[load,year,period]);
+  },[load,year,period,refreshAvailablePeriods]);
+
+  const selectScope=(newYear,newPeriod)=>{
+    setFollowLatest(false);revisionRef.current=null;inspectedRevisionRef.current=null;
+    setYear(newYear);setPeriod(newPeriod);
+  };
+  const followCurrent=async()=>{
+    setFollowLatest(true);followLatestRef.current=true;
+    const picked=await refreshAvailablePeriods(latestWrittenPeriodRef.current,true);
+    if(!picked.changed)load(true);
+  };
 
   const k=data?.kpi||{};
   const closePkpt=useCallback(()=>setPkptExplorer(null),[]);
@@ -158,10 +210,11 @@ function App(){
         </div>
       </div>
       <div className="top-actions">
-        <div className={`realtime status-${syncState}`} role="status" title={revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} • ${revisionInfo.updatedAt}`:'Penanda revisi master belum terverifikasi; refresh cadangan tiap 60 detik'}><span className="live-dot"/> {syncState==='live'?(revisionInfo?.markerAvailable?'TERHUBUNG KE MASTER':'DATA TERBACA'):syncState==='stale'?'DATA CADANGAN':syncState==='partial'?'SEBAGIAN SUMBER':syncState==='offline'?'KONEKSI TERPUTUS':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <div className={`realtime status-${syncState}`} role="status" title={revisionInfo?.markerAvailable?`Revisi master ${revisionInfo.revision} • ${revisionInfo.updatedAt}`:'Penanda revisi master belum terverifikasi; refresh cadangan tiap 60 detik'}><span className="live-dot"/> {syncState==='live'?(revisionInfo?.markerAvailable?'TERHUBUNG KE MASTER':'DATA TERBACA'):syncState==='stale'?'DATA CADANGAN':syncState==='partial'?'SEBAGIAN SUMBER':syncState==='offline'?'KONEKSI TERPUTUS':syncState==='no-period'?'PERIODE BELUM ADA':'MEMERIKSA SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
         <button type="button" className={`manual-refresh ${loading?'refresh-busy':''}`} onClick={()=>load(true)} title="Ambil data terbaru dari Google Sheets" aria-busy={loading}><span className="refresh-symbol" aria-hidden="true">↻</span> {loading?'Memeriksa…':'Muat ulang'}</button>
-        <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
-        <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>setPeriod(e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label>
+        <button type="button" className={`follow-latest ${followLatest?'on':''}`} aria-pressed={followLatest} onClick={followCurrent} title="Ikuti otomatis periode terbaru yang sudah tersedia pada master">{followLatest?'● Mengikuti terbaru':'◌ Ikuti terbaru'}</button>
+        <label className="year-select"><span>TA</span><select value={year} onChange={e=>selectScope(Number(e.target.value),'annual')}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
+        <label className="period-public-select"><span>PERIODE</span><select value={period} aria-label="Periode laporan" onChange={e=>selectScope(year,e.target.value)}>{PERIOD_OPTIONS.map(p=><option key={p.value} value={p.value} disabled={!!availablePeriods?.[year]&&!availablePeriods[year].periods.some(entry=>entry.value===p.value)}>{p.label}{availablePeriods?.[year]&&!availablePeriods[year].periods.some(entry=>entry.value===p.value)?' · belum tersedia':''}</option>)}</select></label>
       </div>
     </header>
 
@@ -199,7 +252,7 @@ function App(){
           </div>
         </section>
 
-        {loading&&!data?<LoadingScreen progress={loadProgress} year={year}/>:error&&!data?<ConnectionPanel error={error} code={errorCode} stage={errorStage} year={year} period={period} lastAttempt={lastAttempt} attemptCount={attemptCount} loading={loading} diagnostic={diagnostic} checking={checking} onRetry={()=>load(true)} onCheck={checkConnection}/>:<>
+        {loading&&!data?<LoadingScreen progress={loadProgress} year={year}/>:error&&!data?<><ConnectionPanel error={error} code={errorCode} stage={errorStage} year={year} period={period} lastAttempt={lastAttempt} attemptCount={attemptCount} loading={loading} diagnostic={diagnostic} checking={checking} onRetry={()=>load(true)} onCheck={checkConnection}/>{(errorCode==='PERIOD_NOT_INITIALIZED'||errorCode==='YEAR_NOT_INITIALIZED')&&<div className="sources-warning"><b>Periode ini belum tersedia pada master.</b><p>Data tahunan atau periode sebelumnya tidak hilang. Pilih periode yang sudah tersedia pada menu di atas.</p><button type="button" onClick={()=>selectScope(year,'annual')}>Lihat data tahunan</button></div>}</>:<>
           {data&&syncState==='stale'&&<div className="sources-warning" role="status"><b>Data cadangan — sinkronisasi langsung sedang terganggu</b><p>Indikator di bawah berasal dari pembacaan Google Sheets terakhir yang berhasil. Waktu data: {data.updatedAt?new Date(data.updatedAt).toLocaleString('id-ID'):'tidak diketahui'}. Gunakan Muat ulang atau diagnostik untuk memeriksa koneksi terbaru.</p><div className="retry-actions"><button type="button" onClick={()=>load(true)}>Muat ulang sekarang</button><button type="button" onClick={checkConnection} disabled={checking}>{checking?'Memeriksa…':'Periksa koneksi'}</button></div><DiagnosticDetails diagnostic={diagnostic}/></div>}
           {data?.failedReadSheets?.length>0&&<div className="sources-warning" role="alert"><b>Beberapa sheet gagal dibaca ({data.failedReadSheets.length})</b><p>{data.failedReadSheets.map(x=>x.sheet).join(', ')}. KPI dari sumber ini dinyatakan belum tersedia, bukan nol.</p><button onClick={()=>load(true)} type="button">Baca ulang sumber</button></div>}
           {data?.formulaHealth?.errorsFound>0&&<div className="sources-warning" role="alert"><b>Perlu pemeriksaan rumus sumber: {data.formulaHealth.errorsFound} sel error terdeteksi</b><p>{(data.formulaHealth.examples||[]).slice(0,5).map(x=>`${x.sheet} (baris ${x.row}, kolom ${x.column}): ${x.error}`).join(' • ')}. Perbaiki melalui Web Kertas Kerja, kemudian muat ulang Dashboard. Angka yang tidak valid tidak dipaksakan menjadi nol.</p><button onClick={()=>load(true)} type="button">Periksa ulang hasil perbaikan</button></div>}
