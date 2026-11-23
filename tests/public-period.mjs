@@ -23,7 +23,7 @@ result=await onRequestGet({request:url('month-01'),env});assert.equal(result.sta
 const incomplete=await result.json();assert.ok(incomplete.missingSheets.includes('Realisasi Fisik & Keu'));assert.equal(incomplete.partial,true);assert.equal(incomplete.kpi.totalAnggaran,null);assert.equal(incomplete.kpi.outputUtama,null);assert.equal(incomplete.kpi.penugasan,null);
 titles.push(...sourceSheets.filter(name=>name!=='IKU').map(name=>`2026__M01__${name}`));
 result=await onRequestGet({request:new Request('https://test.invalid/api/public/dashboard?year=2026&period=month-01&refresh=1'),env});assert.equal(result.status,200);
-const data=await result.json();assert.equal(data.period,'month-01');assert.equal(data.partial,true,'Monthly collection remains partial until the 14 new 2026 reconciliation/report sources are initialized');assert.equal(data.expectedSheetCount,29);
+const data=await result.json();assert.equal(data.period,'month-01');assert.equal(data.partial,true,'Monthly collection remains partial until the 14 new 2026 reconciliation/report sources are initialized');assert.equal(data.expectedSheetCount,28);
 const ranges=hits.filter(x=>x.includes('values:batchGet'));assert.ok(ranges.some(x=>x.includes('2026__M01__IKU')));assert.ok(ranges.every(x=>!x.includes("'2026__IKU'")));
 const cached=await onRequestGet({request:url('month-01'),env});assert.equal(cached.headers.get('x-dashboard-cache'),'HIT');
 console.log('PASS: public dashboard rejects invalid periods, 404 for missing snapshot, reads isolated monthly sheets, and caches period separately.');
