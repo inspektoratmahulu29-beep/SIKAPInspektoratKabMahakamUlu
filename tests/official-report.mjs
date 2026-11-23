@@ -27,12 +27,12 @@ globalThis.fetch=async url=>{
 };
 const req=()=>new Request('https://test.invalid/api/public/dashboard?year=2026&period=annual');
 let result=await onRequestGet({request:req(),env});assert.equal(result.status,200);
-let data=await result.json();assert.equal(data.officialReport.available,false);assert.equal(data.sheets.length,14);
+let data=await result.json();assert.equal(data.officialReport.available,false);assert.equal(data.sheets.length,28);
 cache.clear();titles.push('2026__Laporan_Monev_Renaksi_2026');
 result=await onRequestGet({request:req(),env});assert.equal(result.status,200);
-data=await result.json();assert.equal(data.sheets.length,15);assert.equal(data.officialReport.activities,2);
+data=await result.json();assert.equal(data.sheets.length,28);assert.equal(data.officialReport.activities,2);
 assert.equal(data.officialReport.plannedBudget,30000000);assert.equal(data.officialReport.realizedBudget,5000000);
 assert.equal(data.officialReport.missingRealizations,1);assert.equal(data.kpi.totalAnggaran,null,'Official report must not modify main financial KPI');
 assert.ok(requested.at(-1).includes('Laporan_Monev_Renaksi_2026'));
 assert.ok(requested.at(-1).includes('A:AD'),'Use actual Google Sheets dimensions when user adds columns');
-console.log('PASS official dashboard: optional 15th sheet, no false annual fallback, report budget and realized values correct, no double count, adaptive read width.');
+console.log('PASS official dashboard: optional official report of 28 source sheets, no false annual fallback, report budget and realized values correct, no double count, adaptive read width.');
